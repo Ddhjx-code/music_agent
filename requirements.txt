@@ -1,0 +1,5 @@
+musicpy>=0.6.0
+langchain>=0.3.0
+langchain-openai>=0.3.0
+pytest>=8.0.0
+pytest-cov>=6.0.0
