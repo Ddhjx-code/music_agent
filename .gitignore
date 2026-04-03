@@ -1,0 +1,33 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Generated MIDI output
+fixtures/*.mid
+*.mid
+output/
+tmp/
+
+# Plan (local development doc)
+plan.md
+
+# OS
+.DS_Store
+Thumbs.db
