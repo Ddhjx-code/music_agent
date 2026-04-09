@@ -151,3 +151,61 @@ def midi_dir(tmp_path):
         return path
 
     return tmp_path, write_midi
+
+
+@pytest.fixture
+def multi_track_piece():
+    """
+    A multi-track piece simulating a real MIDI with harmony spread across tracks.
+    Key: C major, 4/4, 120 BPM, 8 measures.
+
+    Track 1: harmony (C-G-Am-F block chords, whole notes)
+    Track 2: bass line (root notes, half notes)
+    Track 3: effect track (very short notes, should be excluded)
+    """
+    bpm = 120
+
+    # Track 1: block chords, one per measure
+    harmony_notes = []
+    harmony_intervals = []
+    chord_data = [
+        (['C3', 'E3', 'G3', 'C4', 'E4', 'G4'], 1.0),
+        (['G2', 'B2', 'D3', 'G3', 'B3', 'D4'], 1.0),
+        (['A2', 'C3', 'E3', 'A3', 'C4', 'E4'], 1.0),
+        (['F2', 'A2', 'C3', 'F3', 'A3', 'C4'], 1.0),
+        (['C3', 'E3', 'G3', 'C4', 'E4', 'G4'], 1.0),
+        (['G2', 'B2', 'D3', 'G3', 'B3', 'D4'], 1.0),
+        (['A2', 'C3', 'E3', 'A3', 'C4', 'E4'], 1.0),
+        (['F2', 'A2', 'C3', 'F3', 'A3', 'C4'], 1.0),
+    ]
+    for pos, (chord_notes, dur) in enumerate(chord_data):
+        for name in chord_notes:
+            harmony_notes.append(mp.note(name[0], int(name[1]), duration=dur))
+            harmony_intervals.append(float(pos))
+    harmony = mp.chord(harmony_notes, interval=harmony_intervals)
+
+    # Track 2: bass line (root notes, half notes, 2 per measure)
+    bass_notes = []
+    bass_intervals = []
+    bass_pos = 0.0
+    for root_note, oct in [('C', 2), ('G', 2), ('A', 2), ('F', 2),
+                            ('C', 2), ('G', 2), ('A', 2), ('F', 2)]:
+        bass_notes.append(mp.note(root_note, oct, duration=0.5))
+        bass_intervals.append(bass_pos)
+        bass_notes.append(mp.note(root_note, oct, duration=0.5))
+        bass_intervals.append(bass_pos + 0.5)
+        bass_pos += 1.0
+    bass = mp.chord(bass_notes, interval=bass_intervals)
+
+    # Track 3: effect track — many very-short notes (should be excluded)
+    effect_notes = [mp.note('C', 1, duration=0.002) for _ in range(200)]
+    effect_intervals = [float(i) * 0.002 for i in range(200)]
+    effect = mp.chord(effect_notes, interval=effect_intervals)
+
+    piece = mp.P(
+        tracks=[harmony, bass, effect],
+        instruments=[1, 1, 1],
+        start_times=[0, 0, 0],
+        bpm=bpm,
+    )
+    return piece

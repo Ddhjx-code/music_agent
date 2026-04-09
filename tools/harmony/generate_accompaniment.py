@@ -12,60 +12,79 @@ import musicpy as mp
 
 # Map chord names to note components
 # Handles: Cmajor, Cminor, Cmaj7, C7, Cdim, Caug, Csus2, Csus4, etc.
+# Also handles musicpy output like "Am13 omit G sort as [3, 1, 2, 5, 4, 6]"
 def _parse_chord_name(chord_str: str) -> tuple[str, list[str]]:
     """
-    Parse a chord name like 'Cmajor', 'Am', 'G7' into (root, intervals).
+    Parse a chord name into (root, intervals).
 
-    Returns (root_note, chord_intervals) where intervals are note offsets
-    from the root in semitones.
+    Handles simple names (Cmajor, Am, G7) and complex musicpy output
+    (Am13 omit G sort as [3, 1, 2, 5, 4, 6], note G4, Cmaj7/E, etc.).
+
+    Returns (root_note, chord_intervals) where intervals are semitone offsets.
     """
     chord_str = chord_str.strip()
 
-    # Extract root (A-G, possibly with # or b)
-    match = re.match(r'^([A-G][#b]?)(.*)', chord_str)
+    # Handle special cases
+    if chord_str in ('rest', 'unknown', ''):
+        return 'C', [0, 4, 7]
+
+    # Extract root — handle 'note G4' format and sharp/flat roots
+    match = re.match(r'^(?:note\s+)?([A-G][#b]?)(.*)', chord_str)
     if not match:
-        return 'C', [0, 4, 7]  # Default to C major
+        return 'C', [0, 4, 7]
 
     root = match.group(1)
-    quality = match.group(2).lower()
+    quality_raw = match.group(2).lower().strip()
 
-    # Determine chord type from quality
+    # Strip noise: slash bass notes, omit clauses, sort directives
+    quality = re.sub(r'/[A-G][#b]?\s*$', '', quality_raw)  # trailing /X
+    quality = re.sub(r'\s*sort\s+as\s+\[.*?\]', '', quality)
+    quality = re.sub(r'\s*omit\s+\w+', '', quality)
+    quality = quality.strip()
+
+    # Quality detection (most specific first)
     if quality in ('major', 'maj', ''):
-        intervals = [0, 4, 7]
-    elif quality in ('minor', 'min', 'm'):
-        intervals = [0, 3, 7]
-    elif quality in ('maj7', 'major7'):
-        intervals = [0, 4, 7, 11]
-    elif quality in ('7', 'dom7', 'dominant7'):
-        intervals = [0, 4, 7, 10]
-    elif quality in ('min7', 'm7', 'minor7'):
-        intervals = [0, 3, 7, 10]
-    elif quality in ('dim', 'diminished'):
-        intervals = [0, 3, 6]
-    elif quality in ('aug', 'augmented'):
-        intervals = [0, 4, 8]
-    elif quality in ('sus2',):
-        intervals = [0, 2, 7]
-    elif quality in ('sus4',):
-        intervals = [0, 5, 7]
-    elif quality.startswith('maj') and 'omit' in quality:
-        intervals = [0, 4, 7, 11]
-    elif quality.startswith('m') and '7' in quality:
-        intervals = [0, 3, 7, 10]
-    elif 'sus4' in quality:
-        intervals = [0, 5, 7]
-    elif 'sus2' in quality:
-        intervals = [0, 2, 7]
-    elif 'dim' in quality:
-        intervals = [0, 3, 6]
-    elif 'aug' in quality:
-        intervals = [0, 4, 8]
-    elif '7' in quality:
-        intervals = [0, 4, 7, 10]
-    else:
-        intervals = [0, 4, 7]  # Default major
+        return root, [0, 4, 7]
+    if quality in ('minor', 'min'):
+        return root, [0, 3, 7]
 
-    return root, intervals
+    # Major-7th family: maj7, maj9, maj11, maj13
+    if quality.startswith('maj'):
+        return root, [0, 4, 7, 11]
+
+    # Minor family: m (standalone), min, m7, m9, m11, m13, min7, minor7
+    if quality == 'm':
+        return root, [0, 3, 7]
+    if quality.startswith('min'):
+        return root, [0, 3, 7, 10]
+    if quality.startswith('m') and any(d in quality for d in ('7', '9', '11', '13')):
+        return root, [0, 3, 7, 10]
+    if quality.startswith('m'):
+        return root, [0, 3, 7]
+
+    # Diminished
+    if 'dim' in quality:
+        return root, [0, 3, 6]
+
+    # Augmented
+    if 'aug' in quality:
+        return root, [0, 4, 8]
+
+    # Suspended
+    if 'sus4' in quality:
+        return root, [0, 5, 7]
+    if 'sus2' in quality:
+        return root, [0, 2, 7]
+
+    # Extended dominant: 7, 9, 11, 13
+    if any(ext in quality for ext in ('7', '9', '11', '13')):
+        return root, [0, 4, 7, 10]
+
+    # 6/69 chords
+    if '6' in quality:
+        return root, [0, 4, 7, 9]
+
+    return root, [0, 4, 7]  # Default major triad
 
 
 def _root_to_base_octave(root: str) -> int:

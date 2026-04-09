@@ -90,66 +90,16 @@ def _detect_chord_progression(piece, measures_per_chunk: int = 1) -> list[dict]:
     """
     Detect chord progression per measure (or per chunk).
 
+    Uses AnalyzeHarmonyTool for multi-track, structured chord detection.
     Returns list of {measure, chord} dicts.
     """
-    progression = []
-    measure_num = 1
+    from tools.analysis.analyze_harmony import AnalyzeHarmonyTool
 
-    for track in piece.tracks:
-        if not hasattr(track, 'notes') and not hasattr(track, '__iter__'):
-            continue
+    granularity = 'measure' if measures_per_chunk == 1 else 'phrase'
+    harmony = AnalyzeHarmonyTool().run(piece, granularity=granularity)
 
-        notes = track.notes if hasattr(track, 'notes') else list(track)
-        if not notes:
-            continue
-
-        # Group notes by measure (using duration to estimate position)
-        current_pos = 0.0
-        current_notes = []
-
-        for note in notes:
-            duration = getattr(note, 'duration', 0.25)
-            current_notes.append(note)
-            current_pos += duration
-
-            if current_pos >= measures_per_chunk:
-                # Detect chord for this chunk
-                if current_notes:
-                    try:
-                        chord_obj = mp.chord(current_notes)
-                        chord_name = mp.alg.detect(chord_obj)
-                        if chord_name:
-                            progression.append({
-                                'measure': measure_num,
-                                'chord': chord_name,
-                            })
-                    except Exception:
-                        progression.append({
-                            'measure': measure_num,
-                            'chord': 'unknown',
-                        })
-                measure_num += 1
-                current_notes = []
-                current_pos = 0.0
-
-        # Handle remaining notes
-        if current_notes:
-            try:
-                chord_obj = mp.chord(current_notes)
-                chord_name = mp.alg.detect(chord_obj)
-                progression.append({
-                    'measure': measure_num,
-                    'chord': chord_name if chord_name else 'unknown',
-                })
-            except Exception:
-                progression.append({
-                    'measure': measure_num,
-                    'chord': 'unknown',
-                })
-
-        break  # Only analyze first track for chord progression
-
-    return progression
+    # Return just measure and chord for backward compatibility with the summary schema
+    return [{'measure': e['measure'], 'chord': e['chord']} for e in harmony]
 
 
 def _detect_form(num_measures: int) -> list[dict]:
