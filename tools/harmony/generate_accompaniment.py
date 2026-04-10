@@ -10,15 +10,44 @@ import re
 import musicpy as mp
 
 
-# Map chord names to note components
+# Map alteration markers to interval adjustments (original → modified semitones).
+# Applied as post-processing on base intervals.
+_ALTERATIONS = {
+    '#5': {7: 8},    # raised 5th
+    'b5': {7: 6},    # lowered 5th
+    '#11': {17: 18}, # raised 11th
+    'b11': {17: 16}, # lowered 11th
+    '#9': {14: 15},  # raised 9th
+    'b9': {14: 13},  # lowered 9th
+    '#13': {21: 22}, # raised 13th
+    'b13': {21: 20}, # lowered 13th
+}
+
+
+def _apply_alterations(intervals: list[int], quality: str) -> list[int]:
+    """Apply alteration markers like #11, b5, #9 to interval list."""
+    result = list(intervals)
+    for marker, mapping in _ALTERATIONS.items():
+        if marker in quality:
+            # Replace matching intervals, add altered value if target not present
+            src, dst = next(iter(mapping.items()))
+            if src in result:
+                result = [dst if i == src else i for i in result]
+            else:
+                # Add the altered interval (e.g., #11=18 for maj13#11)
+                result = result + [dst]
+    return sorted(result)
+
+
+# Map chord names to note components with full extended intervals.
 # Handles: Cmajor, Cminor, Cmaj7, C7, Cdim, Caug, Csus2, Csus4, etc.
 # Also handles musicpy output like "Am13 omit G sort as [3, 1, 2, 5, 4, 6]"
-def _parse_chord_name(chord_str: str) -> tuple[str, list[str]]:
+def _parse_chord_name(chord_str: str) -> tuple[str, list[int]]:
     """
     Parse a chord name into (root, intervals).
 
-    Handles simple names (Cmajor, Am, G7) and complex musicpy output
-    (Am13 omit G sort as [3, 1, 2, 5, 4, 6], note G4, Cmaj7/E, etc.).
+    Returns full extended intervals so accompaniment patterns can include
+    7ths, 9ths, 11ths, 13ths, 6ths, sus tones, etc.
 
     Returns (root_note, chord_intervals) where intervals are semitone offsets.
     """
@@ -42,49 +71,93 @@ def _parse_chord_name(chord_str: str) -> tuple[str, list[str]]:
     quality = re.sub(r'\s*omit\s+\w+', '', quality)
     quality = quality.strip()
 
-    # Quality detection (most specific first)
+    # ---- Quality detection (most specific first) ----
+    # Each returns a list of semitone intervals from the root.
+
+    # Major family (no extensions) — no alterations apply
     if quality in ('major', 'maj', ''):
         return root, [0, 4, 7]
-    if quality in ('minor', 'min'):
-        return root, [0, 3, 7]
 
-    # Major-7th family: maj7, maj9, maj11, maj13
+    # 6/69 chords — must check before 7/9/11/13 to avoid false match on '6'
+    if quality == '69' or quality == '6add9':
+        return root, _apply_alterations([0, 4, 7, 9, 14], quality)
+    if quality == '6':
+        return root, _apply_alterations([0, 4, 7, 9], quality)
+
+    # add9 — adds 9th but no 7th
+    if quality == 'add9':
+        return root, _apply_alterations([0, 4, 7, 14], quality)
+
+    # Major 7th family: maj7, maj9, maj11, maj13
     if quality.startswith('maj'):
-        return root, [0, 4, 7, 11]
+        if '13' in quality:
+            return root, _apply_alterations([0, 4, 7, 11, 14, 21], quality)
+        if '11' in quality:
+            return root, _apply_alterations([0, 4, 7, 11, 17], quality)
+        if '9' in quality:
+            return root, _apply_alterations([0, 4, 7, 11, 14], quality)
+        return root, _apply_alterations([0, 4, 7, 11], quality)  # maj7
 
-    # Minor family: m (standalone), min, m7, m9, m11, m13, min7, minor7
+    # Minor family: m, min, m7, m9, m11, m13, min7, minor7
     if quality == 'm':
-        return root, [0, 3, 7]
-    if quality.startswith('min'):
-        return root, [0, 3, 7, 10]
-    if quality.startswith('m') and any(d in quality for d in ('7', '9', '11', '13')):
-        return root, [0, 3, 7, 10]
+        return root, _apply_alterations([0, 3, 7], quality)
+    if quality.startswith('min') or quality.startswith('minor'):
+        if '13' in quality:
+            return root, _apply_alterations([0, 3, 7, 10, 14, 21], quality)
+        if '11' in quality:
+            return root, _apply_alterations([0, 3, 7, 10, 17], quality)
+        if '9' in quality:
+            return root, _apply_alterations([0, 3, 7, 10, 14], quality)
+        if '7' in quality:
+            return root, _apply_alterations([0, 3, 7, 10], quality)
+        return root, _apply_alterations([0, 3, 7], quality)
     if quality.startswith('m'):
-        return root, [0, 3, 7]
+        # mx patterns: m7, m9, m11, m13
+        if '13' in quality:
+            return root, _apply_alterations([0, 3, 7, 10, 14, 21], quality)
+        if '11' in quality:
+            return root, _apply_alterations([0, 3, 7, 10, 17], quality)
+        if '9' in quality:
+            return root, _apply_alterations([0, 3, 7, 10, 14], quality)
+        if '7' in quality:
+            return root, _apply_alterations([0, 3, 7, 10], quality)
+        return root, _apply_alterations([0, 3, 7], quality)
 
     # Diminished
     if 'dim' in quality:
-        return root, [0, 3, 6]
+        return root, _apply_alterations([0, 3, 6], quality)
 
     # Augmented
     if 'aug' in quality:
-        return root, [0, 4, 8]
+        if '7' in quality or '9' in quality:
+            return root, _apply_alterations([0, 4, 8, 10], quality)  # aug7
+        return root, _apply_alterations([0, 4, 8], quality)
 
-    # Suspended
+    # Suspended family: sus2, sus4, 7sus2, 7sus4, 9sus4, 13sus2, 13sus4
     if 'sus4' in quality:
-        return root, [0, 5, 7]
+        if '13' in quality:
+            return root, _apply_alterations([0, 5, 7, 10, 14, 21], quality)  # 13sus4
+        if '7' in quality or '9' in quality or '11' in quality:
+            return root, _apply_alterations([0, 5, 7, 10], quality)  # 7sus4
+        return root, _apply_alterations([0, 5, 7], quality)
     if 'sus2' in quality:
-        return root, [0, 2, 7]
+        if '13' in quality:
+            return root, _apply_alterations([0, 2, 7, 10, 14, 21], quality)  # 13sus2
+        if '7' in quality or '9' in quality or '11' in quality:
+            return root, _apply_alterations([0, 2, 7, 10], quality)  # 7sus2
+        return root, _apply_alterations([0, 2, 7], quality)
 
     # Extended dominant: 7, 9, 11, 13
-    if any(ext in quality for ext in ('7', '9', '11', '13')):
-        return root, [0, 4, 7, 10]
+    if '13' in quality:
+        return root, _apply_alterations([0, 4, 7, 10, 14, 21], quality)
+    if '11' in quality:
+        return root, _apply_alterations([0, 4, 7, 10, 14, 17], quality)
+    if '9' in quality:
+        return root, _apply_alterations([0, 4, 7, 10, 14], quality)
+    if '7' in quality:
+        return root, _apply_alterations([0, 4, 7, 10], quality)
 
-    # 6/69 chords
-    if '6' in quality:
-        return root, [0, 4, 7, 9]
-
-    return root, [0, 4, 7]  # Default major triad
+    return root, _apply_alterations([0, 4, 7], quality)  # Default major triad
 
 
 def _root_to_base_octave(root: str) -> int:
@@ -204,18 +277,30 @@ class GenerateAccompanimentTool:
         return notes
 
     def _make_broken_chord(self, root, intervals, base_octave, density):
-        """Alberti bass style: root-5th-3rd-5th pattern."""
+        """Alberti bass style: root-5th-3rd-5th pattern, extended for complex chords."""
         if len(intervals) < 3:
             intervals = [0, 4, 7]  # Force major triad
 
-        # Alberti pattern: root - 5th - 3rd - 5th
-        alberti_order = [0, 2, 1, 2]  # indices into intervals
         notes = []
         repeats = {'sparse': 2, 'medium': 4, 'dense': 8}.get(density, 4)
 
-        for _ in range(repeats // len(alberti_order)):
-            for idx in alberti_order:
-                interval = intervals[idx % len(intervals)]
+        # For extended chords (4+ tones), use ascending broken chord
+        # For triads, use classic Alberti bass pattern
+        if len(intervals) >= 4:
+            # Ascending broken chord: root - 3rd - 5th - 7th - 9th - 13th...
+            pattern = list(range(len(intervals)))
+        else:
+            # Classic Alberti: root - 5th - 3rd - 5th
+            pattern = [0, 2, 1, 2]
+
+        pattern_len = len(pattern)
+        # Round up: ensure at least one full cycle
+        num_cycles = (repeats + pattern_len - 1) // pattern_len
+        if num_cycles == 0:
+            num_cycles = 1
+        for _ in range(num_cycles):
+            for idx in pattern:
+                interval = intervals[idx]
                 midi = (base_octave + 1) * 12 + interval
                 name = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][midi % 12]
                 octave = midi // 12 - 1

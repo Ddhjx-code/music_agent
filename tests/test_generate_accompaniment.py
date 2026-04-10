@@ -164,8 +164,22 @@ class TestParseChordName:
         assert 5 in intervals  # sus4 has perfect 4th
 
     def test_six_nine_chord(self):
+        """69 chord should return root + 3rd + 5th + 6th + 9th, not dom7."""
         root, intervals = _parse_chord_name('C69')
         assert root == 'C'
+        assert intervals == [0, 4, 7, 9, 14]
+
+    def test_six_chord(self):
+        """6 chord should return [0, 4, 7, 9], not confused with 7."""
+        root, intervals = _parse_chord_name('C6')
+        assert root == 'C'
+        assert intervals == [0, 4, 7, 9]
+
+    def test_add9_chord(self):
+        """add9 adds 9th but no 7th."""
+        root, intervals = _parse_chord_name('Cadd9')
+        assert root == 'C'
+        assert intervals == [0, 4, 7, 14]
 
     def test_sus2(self):
         root, intervals = _parse_chord_name('Csus2')
@@ -227,22 +241,98 @@ class TestParseChordName:
         assert 3 in intervals or 4 in intervals
 
     def test_minor_ninth(self):
+        """m9 = minor triad + b7 + 9th."""
         root, intervals = _parse_chord_name('Am9')
         assert root == 'A'
-        assert 3 in intervals  # minor
+        assert 3 in intervals  # minor third
+        assert 14 in intervals  # 9th
 
     def test_minor_eleventh(self):
+        """m11 = minor triad + b7 + 9th + 11th."""
         root, intervals = _parse_chord_name('Am11')
         assert root == 'A'
-        assert 3 in intervals  # minor
+        assert 3 in intervals  # minor third
+        assert 17 in intervals  # 11th
 
     def test_dominant_thirteen(self):
+        """13 = dom7 + 9th + 13th."""
         root, intervals = _parse_chord_name('D13')
         assert root == 'D'
         assert 4 in intervals  # major third (dominant, not minor)
+        assert 14 in intervals  # 9th
+        assert 21 in intervals  # 13th
 
     def test_maj9(self):
+        """maj9 = major triad + maj7 + 9th."""
         root, intervals = _parse_chord_name('Gmaj9')
         assert root == 'G'
         assert 3 not in intervals  # Not minor
         assert 4 in intervals  # Major third
+        assert 11 in intervals  # maj7
+        assert 14 in intervals  # 9th
+
+    def test_maj13_full_intervals(self):
+        """maj13 = major triad + maj7 + 9th + 13th."""
+        root, intervals = _parse_chord_name('Gmaj13')
+        assert root == 'G'
+        assert intervals == [0, 4, 7, 11, 14, 21]
+
+    def test_maj11_full_intervals(self):
+        """maj11 = major triad + maj7 + 9th + 11th."""
+        root, intervals = _parse_chord_name('Cmaj11')
+        assert root == 'C'
+        assert intervals == [0, 4, 7, 11, 17]
+
+    def test_dom9_full_intervals(self):
+        """9 = dom7 + 9th."""
+        root, intervals = _parse_chord_name('G9')
+        assert root == 'G'
+        assert intervals == [0, 4, 7, 10, 14]
+
+    def test_dom11_full_intervals(self):
+        """11 = dom7 + 9th + 11th."""
+        root, intervals = _parse_chord_name('C11')
+        assert root == 'C'
+        assert intervals == [0, 4, 7, 10, 14, 17]
+
+    def test_m13_full_intervals(self):
+        """m13 = minor triad + b7 + 9th + 13th."""
+        root, intervals = _parse_chord_name('Am13')
+        assert root == 'A'
+        assert intervals == [0, 3, 7, 10, 14, 21]
+
+    def test_7sus2_full_intervals(self):
+        """7sus2 = sus2 + b7."""
+        root, intervals = _parse_chord_name('A7sus2')
+        assert root == 'A'
+        assert intervals == [0, 2, 7, 10]
+
+    def test_7sus4_full_intervals(self):
+        """7sus4 = sus4 + b7."""
+        root, intervals = _parse_chord_name('A7sus4')
+        assert root == 'A'
+        assert intervals == [0, 5, 7, 10]
+
+    def test_13sus4_full_intervals(self):
+        """13sus4 = sus4 + b7 + 9th + 13th."""
+        root, intervals = _parse_chord_name('A13sus4')
+        assert root == 'A'
+        assert intervals == [0, 5, 7, 10, 14, 21]
+
+    def test_13sus2_full_intervals(self):
+        """13sus2 = sus2 + b7 + 9th + 13th."""
+        root, intervals = _parse_chord_name('D13sus2')
+        assert root == 'D'
+        assert intervals == [0, 2, 7, 10, 14, 21]
+
+    def test_aug7_full_intervals(self):
+        """aug7 = aug triad + b7."""
+        root, intervals = _parse_chord_name('Baug7')
+        assert root == 'B'
+        assert intervals == [0, 4, 8, 10]
+
+    def test_complex_musicpy_full_intervals(self):
+        """Full extended intervals after stripping omit/sort noise."""
+        root, intervals = _parse_chord_name('Am13 omit G sort as [3, 1, 2, 5, 4, 6]')
+        assert root == 'A'
+        assert intervals == [0, 3, 7, 10, 14, 21]

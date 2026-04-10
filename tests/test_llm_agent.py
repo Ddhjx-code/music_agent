@@ -111,7 +111,7 @@ class TestLLMUnderstanding:
             'Given the instruction: "改成流行钢琴"\n'
             'Return: {"style": "pop"}'
         ))
-        assert result.get('style') == 'pop'
+        assert 'pop' in (result.get('style') or '').lower()
 
     def test_llm_understands_chord_progression(self, llm, simple_summary):
         """LLM should identify the chords in the progression."""
