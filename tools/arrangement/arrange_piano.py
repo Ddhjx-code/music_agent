@@ -81,23 +81,58 @@ class ArrangePianoTool:
             'pop': 'block_chord',
         }
         accomp_tool = GenerateAccompanimentTool()
+
+        # Calculate total measures from melody span
+        # Each measure = 4 beats (4/4 time), so total_measures = melody_beats / 4
+        melody_interval = getattr(melody, 'interval', None)
+        melody_beats = sum(melody_interval) if melody_interval else 0
+        total_measures = max(len(harmony), int(melody_beats / 4.0) + 1)
+
         accompaniment = accomp_tool.run(
             harmony,
             style=style,
             pattern=pattern_map[style],
             voicing=voicing,
+            total_measures=total_measures,
         )
 
         # Step 4: Clamp to piano range
         melody_notes = list(melody) if hasattr(melody, '__iter__') else []
+        melody_intervals = getattr(melody, 'interval', None)
         accomp_notes = list(accompaniment) if hasattr(accompaniment, '__iter__') else []
+        accomp_intervals = getattr(accompaniment, 'interval', None)
 
         melody_notes = _clamp_to_piano_range(melody_notes)
         accomp_notes = _clamp_to_piano_range(accomp_notes)
 
+        # Step 4b: Fill melody gaps — extend notes to reach next note
+        if melody_notes and melody_intervals:
+            for i in range(len(melody_notes)):
+                dur = getattr(melody_notes[i], 'duration', 0.25)
+                gap = melody_intervals[i]
+                if gap > dur + 0.05:
+                    # Extend note to fill gap, add slight sustain overlap
+                    melody_notes[i].duration = max(dur, gap - 0.05)
+
+        # Step 4c: Add melody dynamics — phrase structure
+        if melody_notes and melody_intervals:
+            for i, n in enumerate(melody_notes):
+                # Higher notes slightly louder (natural singing quality)
+                degree = getattr(n, 'degree', 60)
+                base_vol = 85 + min(25, (degree - 60) * 0.5)
+                # Every 8 notes: slight crescendo then decrescendo
+                phrase_pos = i % 8
+                if phrase_pos < 4:
+                    vol_mod = 0.9 + 0.1 * (phrase_pos / 4)  # Build up
+                else:
+                    vol_mod = 1.0 - 0.1 * ((phrase_pos - 4) / 4)  # Release
+                n.volume = max(70, min(127, int(base_vol * vol_mod)))
+
         # Step 5: Build 2-track piano piece
-        rh_track = mp.chord(melody_notes) if melody_notes else mp.chord([])
-        lh_track = mp.chord(accomp_notes) if accomp_notes else mp.chord([])
+        rh_track = (mp.chord(melody_notes, interval=melody_intervals)
+                    if melody_notes else mp.chord([]))
+        lh_track = (mp.chord(accomp_notes, interval=accomp_intervals)
+                    if accomp_notes else mp.chord([]))
 
         result = mp.P(
             tracks=[rh_track, lh_track],

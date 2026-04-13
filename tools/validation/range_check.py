@@ -10,16 +10,25 @@ import musicpy as mp
 
 # Instrument ranges as (low_midi, high_midi)
 INSTRUMENT_RANGES = {
+    # Piano
     'piano': (21, 108),     # A0 - C8
-    'violin': (67, 115),    # G3 - A7 (approximate)
+    # Strings
+    'violin': (67, 115),    # G3 - A7
     'viola': (48, 93),      # C3 - E6
     'cello': (36, 88),      # C2 - A5
-    'double_bass': (28, 72), # E1 - C5 (sounds octave lower than written)
-    'flute': (72, 108),     # C4 - C8 (approximate)
-    'clarinet': (50, 104),  # D3 - G7
-    'trumpet': (60, 95),    # C4 - B6 (Bb trumpet sounds a step lower)
+    'double_bass': (28, 72), # E1 - C5 (sounds octave lower)
+    # Woodwinds
+    'flute': (72, 108),     # C4 - C8
+    'clarinet': (50, 104),  # D3 - G7 (Bb, concert pitch range)
+    # Brass
+    'trumpet': (60, 95),    # C4 - B6 (Bb)
+    'french_horn': (40, 85), # E2 - F5 (double horn)
     'trombone': (40, 77),   # E2 - Bb4
     'tuba': (24, 52),       # Bb0 - F3
+    # Saxophones
+    'alto_sax': (57, 92),   # D3 - A5 (Eb)
+    'tenor_sax': (50, 85),  # Bb2 - F5 (Eb)
+    'baritone_sax': (36, 75), # C2 - D5 (Eb)
 }
 
 

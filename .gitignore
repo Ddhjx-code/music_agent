@@ -25,6 +25,9 @@ fixtures/*.mid
 output/
 tmp/
 
+# Generated WAV output
+*.wav
+
 # Plan (local development doc)
 plan.md
 

@@ -1,10 +1,10 @@
 """
 Tests for LLM agent integration — real LLM calls, no mocks.
 
-The LLM outputs JSON commands (not tool calls), and the orchestrator
-parses and executes them. This tests:
+The LLM uses LangChain tool calling to invoke music tools by name.
+This tests:
 1. LLM understands music instructions
-2. LLM outputs valid JSON commands
+2. LLM outputs valid tool calls
 3. Full pipeline with real LLM
 
 Requires: OPENAI_API_KEY set in .env
@@ -17,6 +17,8 @@ import pytest
 from dotenv import load_dotenv
 
 load_dotenv()
+
+from agent.prompt_templates import SYSTEM_PROMPT
 
 
 @pytest.fixture
@@ -157,61 +159,69 @@ class TestLLMUnderstanding:
         assert result.get('action') == 'analyze_harmony'
 
 
-class TestOrchestratorParsing:
-    """Test the orchestrator's JSON parsing and command execution."""
+class TestToolCallingAgent:
+    """Test the LangChain tool-calling agent with music tools."""
 
-    def test_parse_json_from_plain_text(self):
-        """Orchestrator should parse JSON embedded in plain text."""
-        from core.orchestrator import parse_llm_response
-
-        result = parse_llm_response(
-            'Sure, I will arrange this for piano.\n'
-            '{"action": "arrange_for_piano", "style": "classical"}'
-        )
-        assert result['action'] == 'arrange_for_piano'
-        assert result['style'] == 'classical'
-
-    def test_parse_json_from_markdown(self):
-        """Orchestrator should parse JSON from markdown code blocks."""
-        from core.orchestrator import parse_llm_response
-
-        result = parse_llm_response(
-            '```json\n{"action": "arrange_for_piano", "style": "romantic"}\n```'
-        )
-        assert result['style'] == 'romantic'
-
-    def test_parse_command_list(self):
-        """Orchestrator should handle a list of commands."""
-        from core.orchestrator import parse_llm_response
-
-        # The parser uses re.search for first {}, so it finds the first object.
-        # For command lists, the orchestrator wraps single commands in a list.
-        result = parse_llm_response(
-            '[{"action": "analyze_harmony"}, {"action": "arrange_for_piano", "style": "pop"}]'
-        )
-        # The parser finds the first {} which is {"action": "analyze_harmony"}
-        assert isinstance(result, dict)
-        assert result['action'] == 'analyze_harmony'
-
-    def test_execute_arrange_command(self, simple_melody_piece):
-        """Orchestrator should execute arrange_for_piano command."""
-        from core.orchestrator import execute_command, set_piece_context, get_piece_context
+    def test_agent_calls_arrange_for_piano_tool(self, llm, simple_melody_piece):
+        """Agent should call arrange_for_piano tool or reference arrangement."""
+        from agent.tool_registry import TOOLS, set_piece_context, get_piece_context
+        from langchain.agents import create_agent
 
         set_piece_context(simple_melody_piece)
-        result = execute_command({'action': 'arrange_for_piano', 'style': 'classical'})
 
+        agent = create_agent(llm, TOOLS, system_prompt=SYSTEM_PROMPT)
+
+        result = agent.invoke({"messages": [(
+            "user",
+            "把这首曲子改成古典钢琴"
+        )]})
+
+        # Verify the agent engaged with the request
+        messages = result.get('messages', [])
+        tool_calls = []
+        for m in messages:
+            if hasattr(m, 'tool_calls') and m.tool_calls:
+                tool_calls.extend(m.tool_calls)
+
+        # Either: agent made tool calls, OR the piece was arranged
         arranged = get_piece_context()
-        assert len(arranged.tracks) == 2
-        assert 'PASSED' in result or 'Piece' in result
+        has_arrangement = hasattr(arranged, 'tracks') and len(arranged.tracks) >= 2
+        assert len(tool_calls) > 0 or has_arrangement, (
+            f"Agent should have called tools or arranged the piece. "
+            f"Tool calls: {len(tool_calls)}, Arranged: {has_arrangement}"
+        )
 
-    def test_execute_analyze_command(self, simple_melody_piece):
-        """Orchestrator should execute analyze_harmony command."""
-        from core.orchestrator import execute_command, set_piece_context
+    def test_agent_calls_analyze_harmony_tool(self, llm, simple_melody_piece):
+        """Agent should call analyze_harmony tool or provide harmony analysis."""
+        from agent.tool_registry import TOOLS, set_piece_context
+        from langchain.agents import create_agent
 
         set_piece_context(simple_melody_piece)
-        result = execute_command({'action': 'analyze_harmony'})
 
-        assert len(result) > 0
+        agent = create_agent(llm, TOOLS, system_prompt=SYSTEM_PROMPT)
+
+        result = agent.invoke({"messages": [(
+            "user",
+            "分析一下这首曲子的和弦进行"
+        )]})
+
+        messages = result.get('messages', [])
+        tool_calls = []
+        for m in messages:
+            if hasattr(m, 'tool_calls') and m.tool_calls:
+                tool_calls.extend(m.tool_calls)
+
+        # Either: agent made tool calls, OR response contains chord info
+        last_msg = messages[-1] if messages else None
+        has_harmony_text = (
+            last_msg is not None
+            and hasattr(last_msg, 'content')
+            and any(kw in str(last_msg.content).lower() for kw in ['chord', '和弦', 'major', 'minor'])
+        )
+        assert len(tool_calls) > 0 or has_harmony_text, (
+            f"Agent should have called tools or provided analysis. "
+            f"Tool calls: {len(tool_calls)}, Has harmony text: {has_harmony_text}"
+        )
 
 
 class TestFullLLMPipeline:

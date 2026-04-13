@@ -23,8 +23,8 @@ def simple_melody_piece():
     """
     bpm = 120
 
-    # Melody track (single notes, quarter notes)
-    melody = mp.chord([
+    # Melody track (single notes, quarter notes, sequential timing)
+    melody_notes = [
         mp.note('C', 5, duration=0.25),
         mp.note('D', 5, duration=0.25),
         mp.note('E', 5, duration=0.25),
@@ -41,7 +41,8 @@ def simple_melody_piece():
         mp.note('F', 5, duration=0.25),
         mp.note('E', 5, duration=0.25),
         mp.note('D', 5, duration=0.25),
-    ], interval=[0] * 16)
+    ]
+    melody = mp.chord(melody_notes, interval=[0] + [0.25] * 15)
 
     # Chord track: block chords, one per measure (whole notes)
     # Use | operator to concatenate with proper timing
@@ -128,7 +129,7 @@ def single_track_piece():
         mp.note('B', 4, duration=0.25),
         mp.note('C', 5, duration=0.25),
     ]
-    melody = mp.chord(notes=notes, interval=[0] * len(notes))
+    melody = mp.chord(notes=notes, interval=[0] + [0.25] * (len(notes) - 1))
     piece = mp.P(
         tracks=[melody],
         instruments=[1],
@@ -209,3 +210,122 @@ def multi_track_piece():
         bpm=bpm,
     )
     return piece
+
+
+@pytest.fixture
+def four_voice_piece():
+    """
+    A 4-track piece simulating SATB voicing in C major.
+    Key: C major, 4/4, 120 BPM, 4 measures.
+
+    Track 0 (Soprano/Melody): C5 D5 E5 F5 | G5 A5 G5 F5 | E5 D5 C5 G4 | C5 - - -
+    Track 1 (Alto/Harmony):   E4 F4 G4 A4 | B4 C5 B4 A4 | G4 F4 E4 D4 | E4 - - -
+    Track 2 (Tenor/Inner):    C4 D4 E4 F4 | G4 A4 G4 F4 | E4 D4 C4 B3 | C4 - - -
+    Track 3 (Bass):           C2 G2 C3 G2 | C2 G2 C3 G2 | A2 E3 A3 E2 | F2 C3 F3 C2
+    """
+    bpm = 120
+
+    soprano = mp.chord([
+        mp.note('C', 5, duration=0.25), mp.note('D', 5, duration=0.25),
+        mp.note('E', 5, duration=0.25), mp.note('F', 5, duration=0.25),
+        mp.note('G', 5, duration=0.25), mp.note('A', 5, duration=0.25),
+        mp.note('G', 5, duration=0.25), mp.note('F', 5, duration=0.25),
+        mp.note('E', 5, duration=0.25), mp.note('D', 5, duration=0.25),
+        mp.note('C', 5, duration=0.25), mp.note('G', 4, duration=0.25),
+        mp.note('C', 5, duration=1.0),
+    ], interval=[0, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25])
+
+    alto = mp.chord([
+        mp.note('E', 4, duration=0.25), mp.note('F', 4, duration=0.25),
+        mp.note('G', 4, duration=0.25), mp.note('A', 4, duration=0.25),
+        mp.note('B', 4, duration=0.25), mp.note('C', 5, duration=0.25),
+        mp.note('B', 4, duration=0.25), mp.note('A', 4, duration=0.25),
+        mp.note('G', 4, duration=0.25), mp.note('F', 4, duration=0.25),
+        mp.note('E', 4, duration=0.25), mp.note('D', 4, duration=0.25),
+        mp.note('E', 4, duration=1.0),
+    ], interval=[0, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25])
+
+    tenor = mp.chord([
+        mp.note('C', 4, duration=0.25), mp.note('D', 4, duration=0.25),
+        mp.note('E', 4, duration=0.25), mp.note('F', 4, duration=0.25),
+        mp.note('G', 4, duration=0.25), mp.note('A', 4, duration=0.25),
+        mp.note('G', 4, duration=0.25), mp.note('F', 4, duration=0.25),
+        mp.note('E', 4, duration=0.25), mp.note('D', 4, duration=0.25),
+        mp.note('C', 4, duration=0.25), mp.note('B', 3, duration=0.25),
+        mp.note('C', 4, duration=1.0),
+    ], interval=[0, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25])
+
+    bass = mp.chord([
+        mp.note('C', 2, duration=0.5), mp.note('G', 2, duration=0.5),
+        mp.note('C', 3, duration=0.5), mp.note('G', 2, duration=0.5),
+        mp.note('C', 2, duration=0.5), mp.note('G', 2, duration=0.5),
+        mp.note('C', 3, duration=0.5), mp.note('G', 2, duration=0.5),
+        mp.note('A', 2, duration=0.5), mp.note('E', 3, duration=0.5),
+        mp.note('A', 3, duration=0.5), mp.note('E', 2, duration=0.5),
+        mp.note('F', 2, duration=0.5), mp.note('C', 3, duration=0.5),
+        mp.note('F', 3, duration=0.5), mp.note('C', 2, duration=0.5),
+    ], interval=[0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+
+    return mp.P(
+        tracks=[soprano, alto, tenor, bass],
+        instruments=[40, 40, 41, 42],
+        start_times=[0, 0, 0, 0],
+        bpm=bpm,
+    )
+
+
+@pytest.fixture
+def full_harmony_piece():
+    """
+    A multi-track piece with clear melody, harmony, and bass separation.
+    Key: C major, 4/4, 120 BPM, 4 measures.
+
+    Track 0: Melody (high register)
+    Track 1: Harmony (mid-register block chords)
+    Track 2: Counter-melody (mid-high register)
+    Track 3: Bass line (low register)
+    Track 4: Sparse effect (should be ignored)
+    """
+    bpm = 120
+
+    melody = mp.chord([
+        mp.note('G', 5, duration=0.5), mp.note('E', 5, duration=0.5),
+        mp.note('C', 5, duration=0.5), mp.note('D', 5, duration=0.5),
+        mp.note('E', 5, duration=0.5), mp.note('F', 5, duration=0.5),
+        mp.note('G', 5, duration=1.0), mp.note('E', 5, duration=0.5),
+        mp.note('D', 5, duration=0.5), mp.note('C', 5, duration=0.5),
+        mp.note('G', 4, duration=0.5), mp.note('C', 5, duration=1.0),
+    ], interval=[0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+
+    harmony = mp.chord([
+        mp.note('C', 4, duration=1.0), mp.note('E', 4, duration=1.0), mp.note('G', 4, duration=1.0),
+        mp.note('G', 3, duration=1.0), mp.note('B', 3, duration=1.0), mp.note('D', 4, duration=1.0),
+        mp.note('A', 3, duration=1.0), mp.note('C', 4, duration=1.0), mp.note('E', 4, duration=1.0),
+        mp.note('F', 3, duration=1.0), mp.note('A', 3, duration=1.0), mp.note('C', 4, duration=1.0),
+    ], interval=[0, 0, 0, 1.0, 0, 0, 1.0, 0, 0, 1.0, 0, 0])
+
+    counter = mp.chord([
+        mp.note('E', 4, duration=0.5), mp.note('F', 4, duration=0.5),
+        mp.note('G', 4, duration=0.5), mp.note('A', 4, duration=0.5),
+        mp.note('G', 4, duration=0.5), mp.note('F', 4, duration=0.5),
+        mp.note('E', 4, duration=1.0), mp.note('D', 4, duration=0.5),
+        mp.note('C', 4, duration=0.5), mp.note('B', 3, duration=0.5),
+        mp.note('C', 4, duration=0.5), mp.note('E', 4, duration=1.0),
+    ], interval=[0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+
+    bass = mp.chord([
+        mp.note('C', 2, duration=1.0), mp.note('G', 2, duration=1.0),
+        mp.note('A', 2, duration=1.0), mp.note('F', 2, duration=1.0),
+    ], interval=[0, 1.0, 1.0, 1.0])
+
+    # Sparse effect track
+    effect = mp.chord([
+        mp.note('C', 6, duration=0.05) for _ in range(4)
+    ], interval=[0, 1.0, 2.0, 3.0])
+
+    return mp.P(
+        tracks=[melody, harmony, counter, bass, effect],
+        instruments=[1, 1, 1, 1, 1],
+        start_times=[0, 0, 0, 0, 0],
+        bpm=bpm,
+    )

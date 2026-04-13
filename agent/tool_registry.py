@@ -16,6 +16,8 @@ from tools.analysis.analyze_harmony import AnalyzeHarmonyTool as _AnalyzeHarmony
 from tools.harmony.generate_accompaniment import GenerateAccompanimentTool as _GenerateAccompanimentTool
 from tools.arrangement.arrange_piano import ArrangePianoTool as _ArrangePianoTool
 from tools.validation.range_check import RangeCheckTool as _RangeCheckTool
+from tools.arrangement.arrange_strings import ArrangeStringsTool as _ArrangeStringsTool
+from tools.arrangement.arrange_winds import ArrangeWindsTool as _ArrangeWindsTool
 
 
 # Global piece context — set by the orchestrator before agent invocation
@@ -151,12 +153,60 @@ class ValidateRangeTool(BaseTool):
         return _format_result(result)
 
 
+class ArrangeForStringsTool(BaseTool):
+    """LangChain tool: arrange the current piece for string quartet."""
+    name: str = "arrange_for_strings"
+    description: str = (
+        "Arrange the current piece for string quartet (Violin 1, Violin 2, Viola, Cello). "
+        "Maps melody to Vln1, harmony to Vln2, inner voice to Viola, bass to Cello. "
+        "Automatically checks instrument ranges. "
+        "Args: voicing (str) - 'standard' (default). "
+        "Returns a 4-track piece."
+    )
+
+    def _run(self, voicing: str = "standard") -> str:
+        piece = get_piece_context()
+        if piece is None:
+            return "Error: No piece loaded. Please load a MIDI file first."
+        tool = _ArrangeStringsTool()
+        result = tool.run(piece, voicing=voicing)
+        set_piece_context(result)
+        return _format_result(result)
+
+
+class ArrangeForWindsTool(BaseTool):
+    """LangChain tool: arrange the current piece for wind ensemble."""
+    name: str = "arrange_for_winds"
+    description: str = (
+        "Arrange the current piece for wind ensemble "
+        "(Flute, Clarinet in Bb, Alto Sax, Trumpet in Bb, French Horn, Trombone, Tuba). "
+        "Args: instrumentation (str) - 'standard' (7 tracks) or 'quintet' (5 tracks), "
+        "concert_pitch_notation (bool) - True for concert pitch (default), False for transposed notation. "
+        "Returns a multi-track piece with wind instruments."
+    )
+
+    def _run(self, instrumentation: str = "standard", concert_pitch_notation: bool = True) -> str:
+        piece = get_piece_context()
+        if piece is None:
+            return "Error: No piece loaded. Please load a MIDI file first."
+        tool = _ArrangeWindsTool()
+        result = tool.run(
+            piece,
+            instrumentation=instrumentation,
+            concert_pitch_notation=concert_pitch_notation,
+        )
+        set_piece_context(result)
+        return _format_result(result)
+
+
 TOOLS = [
     ArrangeForPianoTool(),
     ExtractMelodyTool(),
     AnalyzeHarmonyTool(),
     GenerateAccompanimentTool(),
     ValidateRangeTool(),
+    ArrangeForStringsTool(),
+    ArrangeForWindsTool(),
 ]
 
 

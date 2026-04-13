@@ -3,8 +3,8 @@ Orchestrator — the user-facing API for the Music Agent pipeline.
 
 Wires together: MIDI I/O → music summary → LLM JSON decision → tool execution → output MIDI.
 
-The LLM outputs JSON commands (not tool calls), and the orchestrator
-parses and executes them. This works with any LLM that supports JSON output.
+The LLM outputs JSON commands, and the orchestrator parses and executes them.
+This works with any LLM that supports JSON output (including models without function calling).
 """
 
 import json
@@ -15,10 +15,16 @@ from core.music_io import load_midi, save_midi
 from core.json_schema import generate_summary
 from agent.tool_registry import (
     set_piece_context, get_piece_context,
-    ArrangeForPianoTool, ExtractMelodyTool,
-    AnalyzeHarmonyTool, GenerateAccompanimentTool,
-    ValidateRangeTool,
 )
+from tools.arrangement.arrange_piano import ArrangePianoTool as _ArrangePianoTool
+from tools.analysis.extract_melody import ExtractMelodyTool as _ExtractMelodyTool
+from tools.analysis.analyze_harmony import AnalyzeHarmonyTool as _AnalyzeHarmonyTool
+from tools.harmony.generate_accompaniment import (
+    GenerateAccompanimentTool as _GenerateAccompanimentTool,
+)
+from tools.validation.range_check import RangeCheckTool as _RangeCheckTool
+from tools.arrangement.arrange_strings import ArrangeStringsTool as _ArrangeStringsTool
+from tools.arrangement.arrange_winds import ArrangeWindsTool as _ArrangeWindsTool
 from agent.prompt_templates import SYSTEM_PROMPT
 
 
@@ -54,39 +60,58 @@ def execute_command(cmd: dict) -> str:
     - validate_range: {action, instrument}
     """
     action = cmd.get('action', '')
+    piece = get_piece_context()
 
     if action == 'arrange_for_piano':
         style = cmd.get('style', 'classical')
-        piece = get_piece_context()
-        tool = ArrangeForPianoTool()
-        result = tool._run(style=style)
-        return result
+        tool = _ArrangePianoTool()
+        result = tool.run(piece, style=style)
+        set_piece_context(result)
+        return f"Arranged for piano ({style}): {len(result.tracks)} tracks"
 
     elif action == 'analyze_harmony':
-        piece = get_piece_context()
-        tool = AnalyzeHarmonyTool()
-        result = tool._run()
-        return result
+        tool = _AnalyzeHarmonyTool()
+        result = tool.run(piece)
+        return f"Analyzed: {len(result)} chords"
 
     elif action == 'extract_melody':
-        piece = get_piece_context()
-        tool = ExtractMelodyTool()
-        result = tool._run()
-        return result
+        tool = _ExtractMelodyTool()
+        result = tool.run(piece)
+        return f"Extracted melody: {len(result)} notes"
 
     elif action == 'generate_accompaniment':
         style = cmd.get('style', 'classical')
-        piece = get_piece_context()
-        tool = GenerateAccompanimentTool()
-        result = tool._run(style=style)
-        return result
+        harmony = _AnalyzeHarmonyTool().run(piece)
+        pattern_map = {
+            'classical': 'broken_chord',
+            'romantic': 'arpeggio',
+            'pop': 'block_chord',
+        }
+        accomp_tool = _GenerateAccompanimentTool()
+        result = accomp_tool.run(harmony, style=style, pattern=pattern_map.get(style, 'broken_chord'))
+        return f"Generated accompaniment: {len(result)} notes"
 
     elif action == 'validate_range':
         instrument = cmd.get('instrument', 'piano')
-        piece = get_piece_context()
-        tool = ValidateRangeTool()
-        result = tool._run(instrument=instrument)
-        return result
+        tool = _RangeCheckTool()
+        result = tool.run(piece, instrument=instrument)
+        status = "PASSED" if result['passed'] else f"FAILED ({len(result['issues'])} issues)"
+        return f"Range check ({instrument}): {status}"
+
+    elif action == 'arrange_for_strings':
+        voicing = cmd.get('voicing', 'standard')
+        tool = _ArrangeStringsTool()
+        result = tool.run(piece, voicing=voicing)
+        set_piece_context(result)
+        return f"Arranged for string quartet: {len(result.tracks)} tracks"
+
+    elif action == 'arrange_for_winds':
+        instrumentation = cmd.get('instrumentation', 'standard')
+        concert_pitch = cmd.get('concert_pitch_notation', True)
+        tool = _ArrangeWindsTool()
+        result = tool.run(piece, instrumentation=instrumentation, concert_pitch_notation=concert_pitch)
+        set_piece_context(result)
+        return f"Arranged for wind ensemble ({instrumentation}): {len(result.tracks)} tracks"
 
     else:
         return f"Unknown action: {action}"
@@ -97,12 +122,13 @@ def create_music_agent(llm):
     Create a music agent that uses LLM JSON output to orchestrate tools.
 
     Args:
-        llm: A LangChain-compatible LLM instance.
+        llm: A LangChain-compatible chat model instance.
 
     Returns:
-        A callable that takes (music_summary, instruction) and returns output.
+        A callable that takes (music_summary, instruction) and returns
+        list of (command, result) tuples.
     """
-    def agent_fn(music_summary: dict, instruction: str) -> str:
+    def agent_fn(music_summary: dict, instruction: str) -> list[tuple[dict, str]]:
         from langchain_core.messages import SystemMessage, HumanMessage
 
         prompt = (
@@ -112,10 +138,12 @@ def create_music_agent(llm):
             f"Respond with ONLY a JSON object. No markdown, no explanation.\n"
             f"Available actions:\n"
             f'- arrange_for_piano: {{"action": "arrange_for_piano", "style": "classical|romantic|pop"}}\n'
+            f'- arrange_for_strings: {{"action": "arrange_for_strings", "voicing": "standard"}}\n'
+            f'- arrange_for_winds: {{"action": "arrange_for_winds", "instrumentation": "standard|quintet", "concert_pitch_notation": true}}\n'
             f'- analyze_harmony: {{"action": "analyze_harmony"}}\n'
             f'- extract_melody: {{"action": "extract_melody"}}\n'
             f'- generate_accompaniment: {{"action": "generate_accompaniment", "style": "..."}}\n'
-            f'- validate_range: {{"action": "validate_range", "instrument": "piano"}}\n'
+            f'- validate_range: {{"action": "validate_range", "instrument": "piano|violin|viola|cello|flute|clarinet|trumpet|trombone|tuba|french_horn|alto_sax"}}\n'
             f'You can chain multiple actions in a list: [{{"action": "..."}}, {{"action": "..."}}]'
         )
 
@@ -124,7 +152,28 @@ def create_music_agent(llm):
             HumanMessage(content=prompt),
         ])
 
-        return response.content
+        # Parse JSON from response
+        text = response.content.strip()
+        try:
+            cmd = parse_llm_response(text)
+        except (json.JSONDecodeError, ValueError):
+            # Fallback to basic style detection
+            style = 'classical'
+            if 'romantic' in instruction.lower():
+                style = 'romantic'
+            elif 'pop' in instruction.lower():
+                style = 'pop'
+            cmd = {'action': 'arrange_for_piano', 'style': style}
+
+        # Execute commands
+        commands = cmd if isinstance(cmd, list) else [cmd]
+        results = []
+        for c in commands:
+            print(f"  Executing: {json.dumps(c)}")
+            result = execute_command(c)
+            results.append((c, result))
+
+        return results
 
     return agent_fn
 
@@ -137,7 +186,7 @@ def run_pipeline(midi_path: str, instruction: str, llm,
     Args:
         midi_path: Path to the input MIDI file.
         instruction: Natural language instruction.
-        llm: A LangChain-compatible LLM instance.
+        llm: A LangChain-compatible chat model instance.
         output_path: Optional output MIDI path.
 
     Returns:
@@ -152,26 +201,7 @@ def run_pipeline(midi_path: str, instruction: str, llm,
 
     # Step 3: Create agent and get LLM decision
     agent = create_music_agent(llm)
-    llm_response = agent(summary, instruction)
-
-    # Step 4: Parse and execute
-    try:
-        cmd = parse_llm_response(llm_response)
-    except (json.JSONDecodeError, ValueError) as e:
-        # Fallback: parse style from instruction directly
-        style = 'classical'
-        if 'romantic' in instruction.lower():
-            style = 'romantic'
-        elif 'pop' in instruction.lower():
-            style = 'pop'
-        cmd = {'action': 'arrange_for_piano', 'style': style}
-
-    # Handle single command or list of commands
-    commands = cmd if isinstance(cmd, list) else [cmd]
-    results = []
-    for c in commands:
-        result = execute_command(c)
-        results.append(result)
+    results = agent(summary, instruction)
 
     # Step 5: Get the (possibly modified) piece and save
     result_piece = get_piece_context()
