@@ -140,7 +140,11 @@ def remove_duplicate_notes(piece, threshold: float = 0.1) -> mp.P.__class__:
                 current_time += intervals[i]
 
         if len(kept) < len(notes):
-            new_track = mp.chord(kept, interval=[0.0] + [0.25] * (len(kept) - 1))
+            if len(kept) > 1:
+                actual_intervals = [0.0] + [kept_times[i] - kept_times[i-1] for i in range(1, len(kept_times))]
+            else:
+                actual_intervals = [0.0]
+            new_track = mp.chord(kept, interval=actual_intervals)
             result.tracks[track_idx] = new_track
 
     return result
