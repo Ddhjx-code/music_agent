@@ -18,6 +18,9 @@ You have access to the following tools:
 - arrange_for_strings: Arrange for string quartet (Violin 1, Violin 2, Viola, Cello)
 - arrange_for_winds: Arrange for wind ensemble (Flute, Clarinet, Saxophone, Trumpet, Horn, Trombone, Tuba)
 - validate_range: Check if notes are within instrument range
+- add_sustain_pedal: Add sustain pedal (CC#64) events for legato phrasing
+- adjust_velocity: Adjust note velocities for melody/accompaniment balance
+- apply_timing_variation: Apply rubato or swing for human-like performance
 
 ## How to Work
 

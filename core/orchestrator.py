@@ -25,6 +25,9 @@ from tools.harmony.generate_accompaniment import (
 from tools.validation.range_check import RangeCheckTool as _RangeCheckTool
 from tools.arrangement.arrange_strings import ArrangeStringsTool as _ArrangeStringsTool
 from tools.arrangement.arrange_winds import ArrangeWindsTool as _ArrangeWindsTool
+from tools.expression.add_pedal import AddSustainPedalTool as _AddSustainPedalTool
+from tools.expression.adjust_velocity import AdjustVelocityTool as _AdjustVelocityTool
+from tools.expression.timing_variation import ApplyTimingVariationTool as _ApplyTimingVariationTool
 from agent.prompt_templates import SYSTEM_PROMPT
 
 
@@ -113,6 +116,30 @@ def execute_command(cmd: dict) -> str:
         set_piece_context(result)
         return f"Arranged for wind ensemble ({instrumentation}): {len(result.tracks)} tracks"
 
+    elif action == 'add_sustain_pedal':
+        mode = cmd.get('mode', 'harmonic_change')
+        tool = _AddSustainPedalTool()
+        result = tool.run(piece, mode=mode)
+        set_piece_context(result)
+        pedal_count = len(getattr(result, 'other_messages', []))
+        return f"Added {pedal_count} pedal events ({mode})"
+
+    elif action == 'adjust_velocity':
+        melody_boost = cmd.get('melody_boost', 0)
+        accomp_reduce = cmd.get('accompaniment_reduce', 0)
+        tool = _AdjustVelocityTool()
+        result = tool.run(piece, melody_boost=melody_boost, accompaniment_reduce=accomp_reduce)
+        set_piece_context(result)
+        return f"Adjusted velocity (melody +{melody_boost}, accomp -{accomp_reduce})"
+
+    elif action == 'apply_timing_variation':
+        vtype = cmd.get('type', 'rubato')
+        amount = cmd.get('amount', 0.05)
+        tool = _ApplyTimingVariationTool()
+        result = tool.run(piece, type=vtype, amount=amount)
+        set_piece_context(result)
+        return f"Applied {vtype} timing variation (amount={amount})"
+
     else:
         return f"Unknown action: {action}"
 
@@ -144,6 +171,9 @@ def create_music_agent(llm):
             f'- extract_melody: {{"action": "extract_melody"}}\n'
             f'- generate_accompaniment: {{"action": "generate_accompaniment", "style": "..."}}\n'
             f'- validate_range: {{"action": "validate_range", "instrument": "piano|violin|viola|cello|flute|clarinet|trumpet|trombone|tuba|french_horn|alto_sax"}}\n'
+            f'- add_sustain_pedal: {{"action": "add_sustain_pedal", "mode": "harmonic_change|every_measure"}}\n'
+            f'- adjust_velocity: {{"action": "adjust_velocity", "melody_boost": 10, "accompaniment_reduce": 10}}\n'
+            f'- apply_timing_variation: {{"action": "apply_timing_variation", "type": "rubato|swing", "amount": 0.05}}\n'
             f'You can chain multiple actions in a list: [{{"action": "..."}}, {{"action": "..."}}]'
         )
 

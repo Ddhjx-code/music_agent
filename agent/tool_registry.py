@@ -18,6 +18,10 @@ from tools.arrangement.arrange_piano import ArrangePianoTool as _ArrangePianoToo
 from tools.validation.range_check import RangeCheckTool as _RangeCheckTool
 from tools.arrangement.arrange_strings import ArrangeStringsTool as _ArrangeStringsTool
 from tools.arrangement.arrange_winds import ArrangeWindsTool as _ArrangeWindsTool
+from tools.expression.add_pedal import AddSustainPedalTool as _AddSustainPedalTool
+from tools.expression.adjust_velocity import AdjustVelocityTool as _AdjustVelocityTool
+from tools.expression.timing_variation import ApplyTimingVariationTool as _ApplyTimingVariationTool
+from tools.validation.theory_check import ValidateTheoryTool as _ValidateTheoryTool
 
 
 # Global piece context — set by the orchestrator before agent invocation
@@ -199,6 +203,65 @@ class ArrangeForWindsTool(BaseTool):
         return _format_result(result)
 
 
+class AddSustainPedalTool(BaseTool):
+    """LangChain tool: add sustain pedal events."""
+    name: str = "add_sustain_pedal"
+    description: str = (
+        "Insert CC#64 sustain pedal events at harmonic change points. "
+        "Args: mode (str) - 'harmonic_change' (default) or 'every_measure'. "
+        "Returns the piece with pedal events."
+    )
+
+    def _run(self, mode: str = "harmonic_change") -> str:
+        piece = get_piece_context()
+        if piece is None:
+            return "Error: No piece loaded."
+        tool = _AddSustainPedalTool()
+        result = tool.run(piece, mode=mode)
+        set_piece_context(result)
+        return _format_result(result)
+
+
+class AdjustVelocityTool(BaseTool):
+    """LangChain tool: adjust note velocities."""
+    name: str = "adjust_velocity"
+    description: str = (
+        "Adjust note velocities to create dynamic contrast. "
+        "Args: melody_boost (int) - increase for melody (default 0), "
+        "accompaniment_reduce (int) - decrease for accompaniment (default 0). "
+        "Returns the piece with adjusted velocities."
+    )
+
+    def _run(self, melody_boost: int = 0, accompaniment_reduce: int = 0) -> str:
+        piece = get_piece_context()
+        if piece is None:
+            return "Error: No piece loaded."
+        tool = _AdjustVelocityTool()
+        result = tool.run(piece, melody_boost=melody_boost, accompaniment_reduce=accompaniment_reduce)
+        set_piece_context(result)
+        return _format_result(result)
+
+
+class ApplyTimingVariationTool(BaseTool):
+    """LangChain tool: apply rubato or swing timing."""
+    name: str = "apply_timing_variation"
+    description: str = (
+        "Apply subtle timing variation for human-like performance. "
+        "Args: type (str) - 'rubato' (phrase-end deceleration) or 'swing' "
+        "(unequal eighth notes), amount (float) - intensity (0.01-0.2, default 0.05). "
+        "Returns the piece with modified timing."
+    )
+
+    def _run(self, type: str = "rubato", amount: float = 0.05) -> str:
+        piece = get_piece_context()
+        if piece is None:
+            return "Error: No piece loaded."
+        tool = _ApplyTimingVariationTool()
+        result = tool.run(piece, type=type, amount=amount)
+        set_piece_context(result)
+        return _format_result(result)
+
+
 TOOLS = [
     ArrangeForPianoTool(),
     ExtractMelodyTool(),
@@ -207,6 +270,9 @@ TOOLS = [
     ValidateRangeTool(),
     ArrangeForStringsTool(),
     ArrangeForWindsTool(),
+    AddSustainPedalTool(),
+    AdjustVelocityTool(),
+    ApplyTimingVariationTool(),
 ]
 
 
