@@ -148,6 +148,14 @@ def render_wav(midi_path: str, wav_path: str, sf2_path: str,
         return None
 
 
+def _validate_timidity_option(value) -> str | None:
+    """Validate a timidity option value is safe for subprocess."""
+    val_str = str(value)
+    if all(c.isalnum() or c in '.-_/' for c in val_str):
+        return val_str
+    return None
+
+
 def render_timidity(midi_path: str, wav_path: str,
                     reverb: bool = True,
                     chorus: bool = True,
@@ -174,7 +182,14 @@ def render_timidity(midi_path: str, wav_path: str,
 
     if options:
         for key, value in options.items():
-            cmd.append(f'{key}{value}')
+            if key.startswith('-') and len(key) <= 3:
+                safe_val = _validate_timidity_option(value)
+                if safe_val is not None:
+                    cmd.append(f'{key}{safe_val}')
+                else:
+                    print(f"  Warning: skipping invalid timidity option: {key}={value}")
+            else:
+                print(f"  Warning: skipping invalid timidity option key: {key}")
 
     try:
         result = subprocess.run(
