@@ -13,9 +13,13 @@ import tempfile
 
 # Lazy import for post-processing (used in wav_to_midi)
 try:
-    from core.audio_postprocess import postprocess_midi as _postprocess_midi
+    from core.audio_postprocess import (
+        postprocess_midi as _postprocess_midi,
+        extract_melody_pipeline as _extract_melody_pipeline,
+    )
 except ImportError:
     _postprocess_midi = None
+    _extract_melody_pipeline = None
 
 
 def check_audio_import_deps() -> dict[str, bool]:
@@ -93,23 +97,44 @@ def separate_stems(wav_path: str, output_dir: str,
         return None
 
     try:
-        from demucs.apply import apply_model
-        from demucs.audio import save_audio
-        from demucs.pretrained import get_model
-        from demucs.separate import separate
+        import soundfile as sf
+        import torchaudio
+        import numpy as np
 
-        separate.main(['--two-stems', 'vocals', '--name', model,
-                       '-o', output_dir, wav_path])
+        # Patch torchaudio.save to use soundfile (torchcodec has FFmpeg lib conflicts)
+        _original_torchaudio_save = torchaudio.save
+        def _patched_save(path, tensor, sample_rate, **kwargs):
+            wav_data = tensor.numpy().T
+            sf.write(str(path), wav_data, sample_rate, subtype='PCM_24')
+        torchaudio.save = _patched_save
 
-        # Find stem files
+        from demucs.separate import main as demucs_main
+        import sys
+
+        orig_argv = sys.argv
+        try:
+            sys.argv = ['demucs', '--name', model, '-o', output_dir, wav_path]
+            demucs_main()
+        finally:
+            sys.argv = orig_argv
+
+        torchaudio.save = _original_torchaudio_save
+
+        # Find stem files — demucs creates: output_dir/<model>/<track_name>/<stem>.wav
         stems = []
         model_dir = os.path.join(output_dir, model)
         if os.path.isdir(model_dir):
-            for f in os.listdir(model_dir):
-                if f.endswith('.wav'):
-                    stems.append(os.path.join(model_dir, f))
+            for track_dir in sorted(os.listdir(model_dir)):
+                track_path = os.path.join(model_dir, track_dir)
+                if os.path.isdir(track_path):
+                    for f in sorted(os.listdir(track_path)):
+                        if f.endswith('.wav'):
+                            stems.append(os.path.join(track_path, f))
         return stems if stems else None
 
+    except subprocess.TimeoutExpired:
+        print("  Error: demucs timed out")
+        return None
     except Exception as e:
         print(f"  Error: stem separation failed: {e}")
         return None
@@ -120,11 +145,25 @@ def wav_to_midi_basic_pitch(wav_path: str, midi_path: str) -> str | None:
     try:
         from basic_pitch.inference import predict_and_save
         output_dir = os.path.dirname(midi_path) or '.'
+        # Find default ONNX model
+        import basic_pitch
+        _pkg = os.path.dirname(basic_pitch.__file__)
+        _model_path = os.path.join(
+            _pkg, 'saved_models', 'icassp_2022', 'nmp.onnx'
+        )
         result = predict_and_save(
             [wav_path], output_dir,
-            save_artifacts=False, enable_sonify_pred=False,
+            save_midi=True, sonify_midi=False,
+            save_model_outputs=False, save_notes=False,
+            model_or_model_path=_model_path,
         )
-        if result and os.path.exists(midi_path):
+        # Basic Pitch names output as <basename>_basic_pitch.mid
+        wav_base = os.path.splitext(os.path.basename(wav_path))[0]
+        generated_mid = os.path.join(output_dir, f'{wav_base}_basic_pitch.mid')
+        if os.path.exists(generated_mid):
+            # Move to requested path
+            import shutil
+            shutil.move(generated_mid, midi_path)
             return midi_path
         return None
     except Exception as e:
@@ -192,7 +231,7 @@ def merge_midi_files(stem_midis: list[tuple[str, str]], output_path: str) -> str
 
 
 def wav_to_midi(wav_path: str, midi_path: str, engine: str = 'omniaudio',
-                postprocess: bool = True) -> str | None:
+                postprocess: bool = True, melody_extract: bool = False) -> str | None:
     """
     Transcribe WAV to MIDI using specified engine.
 
@@ -223,15 +262,36 @@ def wav_to_midi(wav_path: str, midi_path: str, engine: str = 'omniaudio',
         return None
 
     # Post-processing
-    if postprocess and _postprocess_midi is not None:
-        print("  Post-processing: quantize, clean, normalize...")
-        try:
-            import musicpy as mp
-            piece = mp.read(midi_path)
-            piece = _postprocess_midi(piece)
-            mp.write(piece, name=midi_path)
-        except Exception as e:
-            print(f"  Warning: post-processing failed: {e}")
+    if postprocess:
+        if melody_extract and _extract_melody_pipeline is not None:
+            print("  Enhanced melody extraction: detect scale, split melody, quantize...")
+            try:
+                import musicpy as mp
+                piece = mp.read(midi_path)
+                piece, info = _extract_melody_pipeline(piece, return_info=True)
+                print(f"  Detected key: {info.get('key', 'unknown')}, "
+                      f"BPM: {info.get('bpm', 120)}, "
+                      f"Notes: {info.get('notes_after_split_melody', '?')}")
+                mp.write(piece, name=midi_path)
+            except Exception as e:
+                print(f"  Warning: melody extraction failed, falling back to basic postprocess: {e}")
+                if _postprocess_midi is not None:
+                    try:
+                        import musicpy as mp
+                        piece = mp.read(midi_path)
+                        piece = _postprocess_midi(piece)
+                        mp.write(piece, name=midi_path)
+                    except Exception as e2:
+                        print(f"  Warning: basic postprocessing also failed: {e2}")
+        elif _postprocess_midi is not None:
+            print("  Post-processing: quantize, clean, normalize...")
+            try:
+                import musicpy as mp
+                piece = mp.read(midi_path)
+                piece = _postprocess_midi(piece)
+                mp.write(piece, name=midi_path)
+            except Exception as e:
+                print(f"  Warning: post-processing failed: {e}")
 
     return midi_result
 
@@ -276,7 +336,7 @@ def separate_and_transcribe(wav_path: str, output_dir: str,
 
 
 def import_audio(audio_path: str, midi_path: str | None = None,
-                 separate: bool = True) -> str | None:
+                 separate: bool = True, melody_extract: bool = False) -> str | None:
     """
     Full audio import pipeline.
 
@@ -322,7 +382,7 @@ def import_audio(audio_path: str, midi_path: str | None = None,
 
     # Step 3: Transcribe to MIDI
     print("  Transcribing to MIDI...")
-    midi_result = wav_to_midi(wav_path, midi_path)
+    midi_result = wav_to_midi(wav_path, midi_path, melody_extract=melody_extract)
 
     _cleanup(tmp_dir)
 
