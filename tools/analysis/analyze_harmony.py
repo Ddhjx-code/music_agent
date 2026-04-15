@@ -6,8 +6,6 @@ Groups notes by measure/time window across ALL tracks and detects
 the chord for each group.
 """
 
-import re
-
 import musicpy as mp
 
 
@@ -93,7 +91,7 @@ class AnalyzeHarmonyTool:
         return list(intervals)
 
     def _detect_chord(self, notes) -> dict:
-        """Detect chord from notes, returning structured result."""
+        """Detect chord from notes using musicpy alg.detect."""
         if not notes:
             return {'chord': 'rest', 'root': 'C', 'quality': 'rest'}
 
@@ -102,78 +100,27 @@ class AnalyzeHarmonyTool:
 
             # Try structured detection first
             ct = mp.alg.detect_chord_by_root(chord_obj, get_chord_type=True)
-            if ct is not None and ct.root is not None and ct.chord_type is not None:
+            if ct and ct.root and ct.chord_type:
                 return {
                     'chord': f'{ct.root}{ct.chord_type}',
                     'root': ct.root,
                     'quality': ct.chord_type,
                 }
 
-            # If ct exists but root is None (single note), extract from note_name
-            if ct is not None and getattr(ct, 'note_name', None):
-                note_name = ct.note_name  # e.g., 'D4'
-                root = self._extract_root(note_name)
-                return {
-                    'chord': f'{root}major',
-                    'root': root,
-                    'quality': 'major',
-                }
+            if ct and getattr(ct, 'note_name', None):
+                root = ct.note_name[:-1]  # e.g., 'D4' -> 'D'
+                return {'chord': f'{root}major', 'root': root, 'quality': 'major'}
 
-            # Fallback: string detection with simplification
+            # Fallback: string detection, minimal cleanup
             raw = mp.alg.detect(chord_obj)
-            simplified = self._simplify_chord_name(raw)
-            root = self._extract_root(simplified)
-            quality = self._extract_quality(simplified)
-            return {
-                'chord': simplified,
-                'root': root,
-                'quality': quality,
-            }
+            root = self._extract_root(raw)
+            return {'chord': raw, 'root': root, 'quality': raw.replace(root, '') or 'major'}
+
         except Exception:
             return {'chord': 'unknown', 'root': 'C', 'quality': 'unknown'}
 
-    def _simplify_chord_name(self, raw: str) -> str:
-        """Simplify musicpy chord name string for downstream parsing."""
-        if not raw:
-            return 'unknown'
-        if raw.startswith('note '):
-            return raw
-
-        # Handle polychord format: [X]/[Y] -> just use the first chord
-        if raw.startswith('['):
-            match = re.match(r'\[([^\]]+)\]', raw)
-            if match:
-                raw = match.group(1)
-
-        # Remove 'sort as [...]' suffix (handle nested brackets too)
-        result = re.sub(r'\s*sort\s+as\s+\[[^\]]*\]?', '', raw)
-        # Remove 'omit X' clauses
-        result = re.sub(r'\s*omit\s+\w+', '', result)
-        # Remove slash bass notes (but not polychord slashes)
-        result = re.sub(r'/[A-G][#b]?\s*$', '', result)
-        # Simplify 'with X' format (e.g., 'D with perfect fourth' -> 'Dsus4')
-        if ' with perfect fourth' in result:
-            result = result.replace(' with perfect fourth', 'sus4')
-        elif ' with major third' in result:
-            result = result.replace(' with major third', 'major')
-        elif ' with minor third' in result:
-            result = result.replace(' with minor third', 'minor')
-        elif ' with ' in result:
-            # Generic 'with X' -> just use root
-            match = re.match(r'^([A-G][#b]?)\s+with\s+', result)
-            if match:
-                result = match.group(1) + 'major'
-        return result.strip()
-
     def _extract_root(self, chord_str: str) -> str:
         """Extract root note from a chord name string."""
+        import re
         match = re.match(r'^(?:note\s+)?([A-G][#b]?)', chord_str)
         return match.group(1) if match else 'C'
-
-    def _extract_quality(self, chord_str: str) -> str:
-        """Extract quality keyword from a chord name string."""
-        rest = re.sub(r'^(?:note\s+)?[A-G][#b]?', '', chord_str).strip().lower()
-        rest = re.sub(r'/[A-G][#b]?\s*$', '', rest)
-        rest = re.sub(r'\s*sort\s+as\s+\[.*?\]', '', rest)
-        rest = re.sub(r'\s*omit\s+\w+', '', rest)
-        return rest if rest else 'major'

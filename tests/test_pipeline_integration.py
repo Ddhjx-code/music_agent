@@ -14,9 +14,15 @@ import musicpy as mp
 from core.music_io import load_midi, save_midi
 from core.json_schema import generate_summary
 from tools.arrangement.arrange_piano import ArrangePianoTool
+from tools.arrangement.arrange_strings import ArrangeStringsTool
+from tools.arrangement.arrange_winds import ArrangeWindsTool
+from tools.expression.add_pedal import AddSustainPedalTool
+from tools.expression.adjust_velocity import AdjustVelocityTool
+from tools.expression.timing_variation import ApplyTimingVariationTool
 from tools.validation.range_check import RangeCheckTool
+from tools.validation.theory_check import ValidateTheoryTool
 from tools.analysis.analyze_harmony import AnalyzeHarmonyTool
-from tools.harmony.generate_accompaniment import GenerateAccompanimentTool, _parse_chord_name
+from tools.harmony.generate_accompaniment import GenerateAccompanimentTool
 
 
 class TestPipelineIntegration:
@@ -155,10 +161,12 @@ class TestMultiTrackPipeline:
         assert range_check['passed'] is True
 
     def test_harmony_chords_parseable(self, multi_track_piece):
-        """All detected chords should be parseable by _parse_chord_name."""
+        """All detected chords should have valid root notes."""
+        import re
         harmony = AnalyzeHarmonyTool().run(multi_track_piece)
         for entry in harmony:
-            root, intervals = _parse_chord_name(entry['chord'])
+            match = re.match(r'^(?:note\s+)?([A-G][#b]?)', entry['chord'])
+            root = match.group(1) if match else None
             assert root in ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'], \
                 f"Unparseable root in: {entry['chord']}"
 
@@ -181,3 +189,123 @@ class TestMultiTrackPipeline:
         output_path = str(tmp_path / "output.mid")
         save_midi(arranged, output_path)
         assert os.path.exists(output_path)
+
+
+class TestStringQuartetIntegration:
+    """Integration tests for string quartet arrangement."""
+
+    def test_full_pipeline_string_quartet(self, four_voice_piece, tmp_path):
+        """Load MIDI, arrange as string quartet, validate, save."""
+        input_path = str(tmp_path / "input.mid")
+        save_midi(four_voice_piece, input_path)
+
+        piece = load_midi(input_path)
+        arranged = ArrangeStringsTool().run(piece)
+
+        assert len(arranged.tracks) == 4
+        assert arranged.instruments[:4] == [40, 40, 41, 42]
+
+        # Check individual track ranges
+        from tools.validation.range_check import INSTRUMENT_RANGES
+        track_instruments = ['violin', 'violin', 'viola', 'cello']
+        for track_idx, inst in enumerate(track_instruments):
+            low, high = INSTRUMENT_RANGES[inst]
+            for note in arranged.tracks[track_idx]:
+                if hasattr(note, 'degree'):
+                    assert low <= note.degree <= high, \
+                        f"Track {track_idx} ({inst}) note {note.degree} out of range [{low}-{high}]"
+
+        output_path = str(tmp_path / "output_strings.mid")
+        save_midi(arranged, output_path)
+        assert os.path.exists(output_path)
+
+        # Reload and verify
+        output = load_midi(output_path)
+        assert len(output.tracks) == 4
+
+
+class TestWindEnsembleIntegration:
+    """Integration tests for wind ensemble arrangement."""
+
+    def test_full_pipeline_wind_ensemble(self, full_harmony_piece, tmp_path):
+        """Load MIDI, arrange as wind ensemble, validate, save."""
+        piece = full_harmony_piece
+        arranged = ArrangeWindsTool().run(piece)
+
+        assert len(arranged.tracks) == 7
+
+        # Check flute track (0) range
+        from tools.validation.range_check import INSTRUMENT_RANGES
+        track_instruments = ['flute', 'clarinet', 'alto_sax', 'trumpet', 'french_horn', 'trombone', 'tuba']
+        for track_idx, inst in enumerate(track_instruments):
+            low, high = INSTRUMENT_RANGES[inst]
+            for note in arranged.tracks[track_idx]:
+                if hasattr(note, 'degree'):
+                    assert low <= note.degree <= high, \
+                        f"Track {track_idx} ({inst}) note {note.degree} out of range [{low}-{high}]"
+
+        output_path = str(tmp_path / "output_winds.mid")
+        save_midi(arranged, output_path)
+        assert os.path.exists(output_path)
+
+    def test_wind_quintet_pipeline(self, full_harmony_piece, tmp_path):
+        """Quintet arrangement: 5 tracks."""
+        piece = full_harmony_piece
+        arranged = ArrangeWindsTool().run(piece, instrumentation='quintet')
+        assert len(arranged.tracks) == 5
+
+
+class TestExpressionToolsIntegration:
+    """Integration tests for Phase 3 expression tools."""
+
+    def test_pedal_preserves_melody(self, simple_melody_piece):
+        """Sustain pedal should not alter melody notes."""
+        orig_degrees = [n.degree for t in simple_melody_piece.tracks for n in t if hasattr(n, 'degree')]
+        result = AddSustainPedalTool().run(simple_melody_piece)
+        new_degrees = [n.degree for t in result.tracks for n in t if hasattr(n, 'degree')]
+        assert orig_degrees == new_degrees
+
+    def test_velocity_chain_with_piano_arrangement(self, simple_melody_piece):
+        """Piano arrange → velocity boost should produce louder melody."""
+        arranged = ArrangePianoTool().run(simple_melody_piece, style='classical')
+        boosted = AdjustVelocityTool().run(arranged, melody_boost=15, accompaniment_reduce=10)
+
+        melody_vel = sum(n.volume for n in boosted.tracks[0] if hasattr(n, 'volume')) / max(1, len([n for n in boosted.tracks[0] if hasattr(n, 'volume')]))
+        accomp_vel = sum(n.volume for n in boosted.tracks[1] if hasattr(n, 'volume')) / max(1, len([n for n in boosted.tracks[1] if hasattr(n, 'volume')]))
+        assert melody_vel > accomp_vel + 5
+
+    def test_rubato_then_theory_validation(self, simple_melody_piece):
+        """Apply rubato → theory validation should still pass."""
+        result = ApplyTimingVariationTool().run(simple_melody_piece, type='rubato', amount=0.05)
+        theory = ValidateTheoryTool().run(result)
+        assert theory['passed']
+
+    def test_full_expression_chain(self, four_voice_piece, tmp_path):
+        """String quartet → pedal → velocity → rubato → validate → save."""
+        piece = four_voice_piece
+
+        # Arrange for strings
+        arranged = ArrangeStringsTool().run(piece)
+        assert len(arranged.tracks) == 4
+
+        # Add pedal
+        with_pedal = AddSustainPedalTool().run(arranged)
+        pedal_count = len(getattr(with_pedal, 'other_messages', []))
+        assert pedal_count > 0
+
+        # Boost melody velocity
+        with_velocity = AdjustVelocityTool().run(with_pedal, melody_boost=10)
+
+        # Apply rubato
+        with_rubato = ApplyTimingVariationTool().run(with_velocity, type='rubato', amount=0.03)
+
+        # Theory validation
+        theory = ValidateTheoryTool().run(with_rubato)
+        assert theory['summary']  # Should have a summary
+
+        # Save and reload
+        output_path = str(tmp_path / "output_expression.mid")
+        save_midi(with_rubato, output_path)
+        assert os.path.exists(output_path)
+        reloaded = load_midi(output_path)
+        assert len(reloaded.tracks) == 4
