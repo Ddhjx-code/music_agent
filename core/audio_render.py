@@ -20,6 +20,7 @@ SOUNDFONT_CANDIDATES = [
     '/usr/share/sounds/sf2/FluidR3_GM.sf2',
     '/usr/share/sounds/sf2/TimGM6mb.sf2',
     # Project-local
+    'assets/YDP_GrandPiano.sf2',
     'assets/FluidR3_GM.sf2',
 ]
 
@@ -67,7 +68,10 @@ def apply_audio_postfx(input_wav: str, output_wav: str,
     if compression:
         filters.append('acompressor=threshold=0.089:ratio=9:attack=200:release=1000')
     if normalize:
-        filters.append(f'loudnorm=I={target_db}')
+        # EBU R128 loudness target: -14 LUFS for music (valid range: -70 to -5)
+        loudness = float(target_db) if target_db.replace('.', '').replace('-', '').isdigit() else -14
+        loudness = max(-70, min(-5, loudness))
+        filters.append(f'loudnorm=I={loudness}')
 
     filter_str = ','.join(filters)
 
@@ -108,11 +112,7 @@ def render_wav(midi_path: str, wav_path: str, sf2_path: str,
     options = options or {}
     raw_path = wav_path.rsplit('.', 1)[0] + '.raw'
 
-    cmd = ['fluidsynth', '-ni']
-    if options.get('reverb'):
-        cmd.extend(['-r', str(options['reverb'])])
-    if options.get('chorus'):
-        cmd.extend(['-c', str(options['chorus'])])
+    cmd = ['fluidsynth', '-ni', '-R', 'yes', '-C', 'yes']
     cmd.extend(['-F', raw_path, sf2_path, midi_path])
 
     try:

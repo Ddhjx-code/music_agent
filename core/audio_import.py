@@ -1,25 +1,16 @@
 """
 Audio import module.
 
-Pipeline: MP3/WAV → (Demucs stems) → Basic Pitch → MIDI → musicpy piece.
+Pipeline: MP3/WAV → (Demucs stems) → Basic Pitch → MIDI.
 
 Gracefully handles missing optional dependencies with actionable error messages.
+Post-processing and melody extraction are now handled by midi_fixer.py upstream.
 """
 
 import os
 import shutil
 import subprocess
 import tempfile
-
-# Lazy import for post-processing (used in wav_to_midi)
-try:
-    from core.audio_postprocess import (
-        postprocess_midi as _postprocess_midi,
-        extract_melody_pipeline as _extract_melody_pipeline,
-    )
-except ImportError:
-    _postprocess_midi = None
-    _extract_melody_pipeline = None
 
 
 def check_audio_import_deps() -> dict[str, bool]:
@@ -78,7 +69,7 @@ def audio_to_wav(audio_path: str, wav_path: str) -> str | None:
 
 
 def separate_stems(wav_path: str, output_dir: str,
-                   model: str = 'htdemucs') -> list[str] | None:
+                   model: str = 'htdemucs') -> dict[str, str] | None:
     """
     Separate audio into stems using Demucs.
 
@@ -88,7 +79,7 @@ def separate_stems(wav_path: str, output_dir: str,
         model: Demucs model name (default: 'htdemucs').
 
     Returns:
-        List of stem file paths, or None if demucs not available.
+        Dict mapping stem name to file path, or None if demucs not available.
     """
     deps = check_audio_import_deps()
     if not deps.get('demucs'):
@@ -120,8 +111,9 @@ def separate_stems(wav_path: str, output_dir: str,
 
         torchaudio.save = _original_torchaudio_save
 
-        # Find stem files — demucs creates: output_dir/<model>/<track_name>/<stem>.wav
-        stems = []
+        # Find stem files — demucs creates: output_dir/<model>/<track_name>/<stem_name>.wav
+        # Extract stem name from filename, don't rely on alphabetical order
+        stems = {}
         model_dir = os.path.join(output_dir, model)
         if os.path.isdir(model_dir):
             for track_dir in sorted(os.listdir(model_dir)):
@@ -129,7 +121,8 @@ def separate_stems(wav_path: str, output_dir: str,
                 if os.path.isdir(track_path):
                     for f in sorted(os.listdir(track_path)):
                         if f.endswith('.wav'):
-                            stems.append(os.path.join(track_path, f))
+                            stem_name = os.path.splitext(f)[0]
+                            stems[stem_name] = os.path.join(track_path, f)
         return stems if stems else None
 
     except subprocess.TimeoutExpired:
@@ -230,16 +223,16 @@ def merge_midi_files(stem_midis: list[tuple[str, str]], output_path: str) -> str
         return None
 
 
-def wav_to_midi(wav_path: str, midi_path: str, engine: str = 'omniaudio',
-                postprocess: bool = True, melody_extract: bool = False) -> str | None:
+def wav_to_midi(wav_path: str, midi_path: str, engine: str = 'omniaudio') -> str | None:
     """
     Transcribe WAV to MIDI using specified engine.
+
+    Post-processing is now handled by midi_fixer.py upstream.
 
     Args:
         wav_path: Input WAV file.
         midi_path: Output MIDI path.
         engine: 'omniaudio' (default) or 'basic_pitch'.
-        postprocess: Whether to run post-processing on output.
 
     Returns:
         Path to MIDI file, or None on failure.
@@ -258,48 +251,13 @@ def wav_to_midi(wav_path: str, midi_path: str, engine: str = 'omniaudio',
         print("  Install: pip install omniaudio basic-pitch")
         return None
 
-    if not midi_result:
-        return None
-
-    # Post-processing
-    if postprocess:
-        if melody_extract and _extract_melody_pipeline is not None:
-            print("  Enhanced melody extraction: detect scale, split melody, quantize...")
-            try:
-                import musicpy as mp
-                piece = mp.read(midi_path)
-                piece, info = _extract_melody_pipeline(piece, return_info=True)
-                print(f"  Detected key: {info.get('key', 'unknown')}, "
-                      f"BPM: {info.get('bpm', 120)}, "
-                      f"Notes: {info.get('notes_after_split_melody', '?')}")
-                mp.write(piece, name=midi_path)
-            except Exception as e:
-                print(f"  Warning: melody extraction failed, falling back to basic postprocess: {e}")
-                if _postprocess_midi is not None:
-                    try:
-                        import musicpy as mp
-                        piece = mp.read(midi_path)
-                        piece = _postprocess_midi(piece)
-                        mp.write(piece, name=midi_path)
-                    except Exception as e2:
-                        print(f"  Warning: basic postprocessing also failed: {e2}")
-        elif _postprocess_midi is not None:
-            print("  Post-processing: quantize, clean, normalize...")
-            try:
-                import musicpy as mp
-                piece = mp.read(midi_path)
-                piece = _postprocess_midi(piece)
-                mp.write(piece, name=midi_path)
-            except Exception as e:
-                print(f"  Warning: post-processing failed: {e}")
-
     return midi_result
 
 
 def separate_and_transcribe(wav_path: str, output_dir: str,
                             engine: str = 'omniaudio') -> str | None:
     """
-    Full pipeline: Demucs stems → per-stem transcription → merge MIDI.
+    Full pipeline: Demucs stems → per-stem transcription → fix_midi per stem → merge.
 
     Args:
         wav_path: Input WAV file.
@@ -318,9 +276,7 @@ def separate_and_transcribe(wav_path: str, output_dir: str,
         return wav_to_midi(wav_path, midi_path, engine=engine)
 
     midi_files = []
-    stem_names = ['vocals', 'bass', 'drums', 'other']
-    for i, stem_path in enumerate(stems):
-        name = stem_names[i] if i < len(stem_names) else f'stem_{i}'
+    for name, stem_path in stems.items():
         midi_path = os.path.join(output_dir, f'{name}.mid')
         print(f"  Transcribing stem: {name}")
         result = wav_to_midi(stem_path, midi_path, engine=engine)
@@ -331,12 +287,24 @@ def separate_and_transcribe(wav_path: str, output_dir: str,
         print("  Error: no stems transcribed successfully")
         return None
 
+    # Fix each stem MIDI before merging
+    from core.midi_fixer import fix_midi
+    fixed_midi_files = []
+    for name, midi_path in midi_files:
+        fixed_path = os.path.join(output_dir, f'{name}_fixed.mid')
+        print(f"  Fixing stem: {name}...")
+        result = fix_midi(midi_path, stem_type=name, output_path=fixed_path)
+        if result:
+            fixed_midi_files.append((name, result))
+        else:
+            fixed_midi_files.append((name, midi_path))
+
     merge_path = os.path.join(output_dir, 'merged.mid')
-    return merge_midi_files(midi_files, merge_path)
+    return merge_midi_files(fixed_midi_files, merge_path)
 
 
 def import_audio(audio_path: str, midi_path: str | None = None,
-                 separate: bool = True, melody_extract: bool = False) -> str | None:
+                 separate: bool = True) -> str | None:
     """
     Full audio import pipeline.
 
@@ -344,6 +312,7 @@ def import_audio(audio_path: str, midi_path: str | None = None,
     1. audio → WAV
     2. (optional) Demucs stem separation
     3. Basic Pitch → MIDI
+    4. fix_midi → merge
 
     Args:
         audio_path: Input audio file (MP3, WAV, FLAC, OGG).
@@ -375,14 +344,22 @@ def import_audio(audio_path: str, midi_path: str | None = None,
         print("  Separating stems...")
         stems = separate_stems(wav_path, tmp_dir)
         if stems:
-            # Use vocal stem for transcription if available
-            vocal = next((s for s in stems if 'vocals' in s.lower()), wav_path)
-            wav_path = vocal
+            wav_path = stems.get('vocals', wav_path)
             print(f"  Using vocal stem for transcription")
 
     # Step 3: Transcribe to MIDI
     print("  Transcribing to MIDI...")
-    midi_result = wav_to_midi(wav_path, midi_path, melody_extract=melody_extract)
+    midi_result = wav_to_midi(wav_path, midi_path)
+
+    # Step 4: Fix the MIDI
+    if midi_result:
+        from core.midi_fixer import fix_midi
+        fixed_path = os.path.splitext(midi_path)[0] + '_fixed.mid'
+        print("  Fixing MIDI...")
+        fixed = fix_midi(midi_result, stem_type='vocals', output_path=fixed_path)
+        if fixed:
+            midi_result = fixed
+            print(f"  Fixed MIDI: {fixed}")
 
     _cleanup(tmp_dir)
 

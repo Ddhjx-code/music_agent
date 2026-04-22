@@ -32,16 +32,15 @@ def is_audio_input(path: str) -> bool:
     return ext in AUDIO_EXTENSIONS
 
 
-def import_audio_to_midi(audio_path: str, output_dir: str, melody_extract: bool = False) -> str | None:
+def import_audio_to_midi(audio_path: str, output_dir: str) -> str | None:
     """
     Import audio file to MIDI using the full pipeline:
-    Demucs stems -> per-stem transcription -> merge -> postprocess.
+    Demucs stems -> per-stem transcription -> fix_midi per stem -> merge.
     """
     from core.audio_import import (
         separate_stems, wav_to_midi_basic_pitch,
         merge_midi_files, audio_to_wav,
     )
-    from core.audio_postprocess import postprocess_midi
     import musicpy as mp
 
     print(f"Importing audio: {audio_path}")
@@ -93,23 +92,28 @@ def import_audio_to_midi(audio_path: str, output_dir: str, melody_extract: bool 
 
     print(f"  Transcribed {len(midi_files)} stem(s)")
 
-    # Step 4: Merge
+    # Step 3.5: Fix each stem MIDI before merging
+    from core.midi_fixer import fix_midi
+    fixed_midi_files = []
+    for name, midi_path in midi_files:
+        fixed_path = os.path.join(midi_dir, f'{name}_fixed.mid')
+        print(f"  Fixing stem: {name}...")
+        result = fix_midi(midi_path, stem_type=name, output_path=fixed_path)
+        if result:
+            fixed_midi_files.append((name, result))
+        else:
+            # Fallback: use original if fix fails
+            fixed_midi_files.append((name, midi_path))
+
+    midi_files = fixed_midi_files
+
+    # Step 4: Merge (no postprocess needed — stems are already fixed)
     merged_path = os.path.join(output_dir, 'imported.mid')
     merged = merge_midi_files(midi_files, merged_path)
     if not merged:
         print("  Error: MIDI merge failed.")
         return None
 
-    # Step 5: Post-process
-    piece = mp.read(merged)
-    if melody_extract:
-        from core.audio_postprocess import extract_melody_pipeline
-        piece, info = extract_melody_pipeline(piece, return_info=True)
-        print(f"  Enhanced melody extraction: key={info.get('key', 'unknown')}, "
-              f"BPM={info.get('bpm', 120)}, notes={info.get('notes_after_split_melody', '?')}")
-    else:
-        piece = postprocess_midi(piece)
-    mp.write(piece, name=merged)
     print(f"  MIDI: {merged} ({os.path.getsize(merged)} bytes)")
 
     return merged
@@ -182,8 +186,6 @@ def main():
                         help='Use algorithm-only mode (no LLM)')
     parser.add_argument('--no-separate', action='store_true',
                         help='Skip stem separation for audio input (use full audio)')
-    parser.add_argument('--melody-extract', action='store_true',
-                        help='Use enhanced melody extraction (musicpy built-ins) for audio input')
     args = parser.parse_args()
 
     # Validate input
@@ -222,8 +224,7 @@ def main():
         print(f"Output: {output_path}")
         print()
 
-        midi_path = import_audio_to_midi(args.input, os.path.dirname(output_path) or '.',
-                                         melody_extract=getattr(args, 'melody_extract', False))
+        midi_path = import_audio_to_midi(args.input, os.path.dirname(output_path) or '.')
         if not midi_path:
             print("Error: Audio import failed.")
             sys.exit(1)

@@ -329,3 +329,92 @@ def fix_midi(midi_path: str, stem_type: str = "vocals",
     # Step 3: Apply fixes
     result = apply_fixes(midi_path, fix_instructions, output_path)
     return result
+
+
+def fix_midi_to_score(midi_path: str, stem_type: str = "vocals",
+                      output_dir: str | None = None,
+                      reference_info: str = "",
+                      quantize_style: str = "clean_score") -> dict:
+    """
+    Full pipeline: fix MIDI → ABC → LLM quantization → clean MIDI.
+
+    Args:
+        midi_path: Input MIDI file.
+        stem_type: 'vocals', 'bass', 'other'.
+        output_dir: Directory for intermediate files (default: same dir as midi_path).
+        reference_info: Optional reference info for MIDI fix step.
+        quantize_style: LLM quantization style.
+
+    Returns:
+        Dict with paths to all intermediate and final outputs.
+    """
+    base = os.path.splitext(midi_path)[0]
+    if output_dir is None:
+        output_dir = os.path.dirname(base) or "."
+
+    fixed_mid = os.path.join(output_dir, f"{os.path.basename(base)}_fixed.mid")
+    abc_raw = os.path.join(output_dir, f"{os.path.basename(base)}_raw.abc")
+    abc_quant = os.path.join(output_dir, f"{os.path.basename(base)}_quantized.abc")
+    quantized_mid = os.path.join(output_dir, f"{os.path.basename(base)}_quantized.mid")
+
+    from core.midi_analysis import analyze_midi
+    from core.midi_to_abc import midi_to_abc, abc_to_midi, read_abc, write_abc
+    from core.abc_quantize import quantize_abc, extract_key_from_abc, validate_abc
+
+    print("=" * 50)
+    print("Stage 1: MIDI fix (analysis → LLM → tool)")
+    print("=" * 50)
+    fixed_mid = fix_midi(midi_path, stem_type, fixed_mid, reference_info)
+    if not fixed_mid:
+        return None
+
+    print("=" * 50)
+    print("Stage 2: MIDI → ABC")
+    print("=" * 50)
+    abc_path = midi_to_abc(fixed_mid, abc_raw)
+    if not abc_path:
+        return {"fixed_mid": fixed_mid}
+
+    abc_text = read_abc(abc_path)
+    key = extract_key_from_abc(abc_text)
+    print(f"  ABC key: {key}, size: {len(abc_text)} bytes")
+    print()
+
+    print("=" * 50)
+    print("Stage 3: LLM tonal quantization")
+    print("=" * 50)
+    quantized = quantize_abc(abc_text, key=key, style=quantize_style)
+    if not quantized:
+        print("  LLM quantization failed, using raw ABC")
+        quantized = abc_text
+
+    quantized_path = write_abc(quantized, abc_quant)
+    print(f"  Quantized ABC: {quantized_path}, size: {len(quantized)} bytes")
+    print()
+
+    print("=" * 50)
+    print("Stage 4: ABC → MIDI")
+    print("=" * 50)
+    final_mid = abc_to_midi(quantized_path, quantized_mid)
+
+    # Compare results
+    print()
+    print("=" * 50)
+    print("Comparison")
+    print("=" * 50)
+    for path, label in [
+        (midi_path, "Original"),
+        (fixed_mid, "Fixed"),
+        (final_mid, "Quantized"),
+    ]:
+        if path and os.path.exists(path):
+            d = analyze_midi(path)
+            print(f"  {label} ({d.note_count} notes): overlap={d.overlap_rate:.0%}, "
+                  f"chains(2+)={d.chain_count_2plus}, pitch={d.pitch_range}")
+
+    return {
+        "fixed_mid": fixed_mid,
+        "abc_raw": abc_path,
+        "abc_quantized": quantized_path,
+        "quantized_mid": final_mid,
+    }
