@@ -58,33 +58,22 @@ def import_audio_to_midi(audio_path: str, output_dir: str) -> str | None:
     stem_dir = os.path.join(tmp_dir, 'stems')
     os.makedirs(stem_dir, exist_ok=True)
     print("  Separating stems (Demucs)...")
-    stems = separate_stems(wav_result, stem_dir)
-    if not stems:
+    stems_dict = separate_stems(wav_result, stem_dir)
+    if not stems_dict:
         print("  Stem separation unavailable, using full audio")
-        stems = [wav_result]
+        stems_dict = {'full': wav_result}
 
     # Step 3: Transcribe each stem
     midi_dir = os.path.join(tmp_dir, 'midi')
     os.makedirs(midi_dir, exist_ok=True)
     midi_files = []
-    stem_names = ['vocals', 'bass', 'drums', 'other']
-    for i, stem_path in enumerate(stems):
-        if isinstance(stem_path, str) and os.path.exists(stem_path):
-            name = stem_names[i] if i < len(stem_names) else f'stem_{i}'
+    for name, stem_path in stems_dict.items():
+        if os.path.exists(stem_path):
             midi_path = os.path.join(midi_dir, f'{name}.mid')
             print(f"  Transcribing: {name}...")
             result = wav_to_midi_basic_pitch(stem_path, midi_path)
             if result:
                 midi_files.append((name, result))
-        else:
-            pass
-
-    # Also handle case where stem is just a single file (no separation)
-    if not midi_files and len(stems) == 1 and isinstance(stems[0], str):
-        midi_path = os.path.join(midi_dir, 'full.mid')
-        result = wav_to_midi_basic_pitch(stems[0], midi_path)
-        if result:
-            midi_files.append(('full', result))
 
     if not midi_files:
         print("  Error: No stems transcribed successfully.")
@@ -340,7 +329,7 @@ def _run_llm_pipeline(piece, instruction: str, output_path: str, fmt: str, sf2: 
     from core.orchestrator import create_music_agent
 
     agent = create_music_agent(llm)
-    results = agent(enriched_summary, instruction)
+    results = agent(piece, instruction)
 
     # Get the arranged piece from context
     from agent.tool_registry import get_piece_context

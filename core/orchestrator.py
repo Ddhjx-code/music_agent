@@ -73,6 +73,10 @@ def parse_llm_response(text: str) -> dict:
 def execute_command(cmd: dict) -> str:
     """Execute a single LLM command and return result string."""
     action = cmd.get('action', '')
+    if isinstance(action, dict):
+        # LLM returned nested dict — unwrap
+        cmd = action
+        action = cmd.get('action', '')
     piece = get_piece_context()
 
     if action == 'arrange_for_piano':
@@ -158,6 +162,7 @@ def create_music_agent(llm):
         history = []
         results = []
         iteration = 0
+        used_actions = set()
 
         while iteration < MAX_ITERATIONS:
             iteration += 1
@@ -171,6 +176,7 @@ def create_music_agent(llm):
                 f"User request: {instruction}\n\n"
                 f"Previous actions and results:\n{history_text}\n\n"
                 f"Choose ONE action or signal done. {AVAILABLE_ACTIONS}"
+                f"Do NOT repeat actions already taken. "
                 f"Respond with ONLY JSON. No explanation."
             )
 
@@ -190,6 +196,15 @@ def create_music_agent(llm):
             if cmd.get('done', False):
                 break
 
+            action_key = json.dumps(cmd, sort_keys=True)
+            action_name = cmd.get('action', '')
+            if isinstance(action_name, dict):
+                action_name = action_name.get('action', '')
+            if action_key in used_actions or action_name in {'arrange_for_piano', 'arrange_for_strings', 'arrange_for_winds'}:
+                if action_key in used_actions:
+                    print(f"  [{iteration}] Skipping duplicate action: {action_name}")
+                    continue
+
             # Execute command
             print(f"  [{iteration}] Executing: {json.dumps(cmd)}")
             result_text = execute_command(cmd)
@@ -197,6 +212,7 @@ def create_music_agent(llm):
 
             results.append((cmd, result_text))
             history.append({'action': cmd, 'result': result_text})
+            used_actions.add(action_key)
 
             # Update music JSON for next iteration
             current_piece = get_piece_context()
