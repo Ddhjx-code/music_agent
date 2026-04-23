@@ -30,22 +30,7 @@ from tools.expression.timing_variation import ApplyTimingVariationTool as _Apply
 # Max iterations to prevent infinite loops
 MAX_ITERATIONS = 10
 
-# Available actions for the LLM prompt
-AVAILABLE_ACTIONS = """
-Available actions:
-- arrange_for_piano: {"action": "arrange_for_piano", "style": "classical|romantic|pop"}
-- arrange_for_strings: {"action": "arrange_for_strings", "voicing": "standard"}
-- arrange_for_winds: {"action": "arrange_for_winds", "instrumentation": "standard|quintet"}
-- analyze_harmony: {"action": "analyze_harmony"}
-- extract_melody: {"action": "extract_melody"}
-- generate_accompaniment: {"action": "generate_accompaniment", "style": "classical|romantic|pop"}
-- validate_range: {"action": "validate_range", "instrument": "piano|violin|viola|cello"}
-- add_sustain_pedal: {"action": "add_sustain_pedal", "mode": "harmonic_change|every_measure"}
-- adjust_velocity: {"action": "adjust_velocity", "melody_boost": 10, "accompaniment_reduce": 10}
-- apply_timing_variation: {"action": "apply_timing_variation", "type": "rubato|swing", "amount": 0.05}
-
-When done editing, respond with: {"done": true}
-"""
+from core.prompt_loader import load_prompt
 
 
 def parse_llm_response(text: str) -> dict:
@@ -169,21 +154,25 @@ def create_music_agent(llm):
 
             # Build prompt with current music state
             history_text = json.dumps(history[-3:], indent=2) if history else "(none yet)"
-
-            prompt = (
-                f"You are a music editor. Here is the current state of the music:\n\n"
-                f"{json.dumps(music_json, indent=2)}\n\n"
-                f"User request: {instruction}\n\n"
-                f"Previous actions and results:\n{history_text}\n\n"
-                f"Choose ONE action or signal done. {AVAILABLE_ACTIONS}"
-                f"Do NOT repeat actions already taken. "
-                f"Respond with ONLY JSON. No explanation."
+            template = load_prompt("orchestrator")
+            prompt = template.format(
+                music_json=json.dumps(music_json, indent=2),
+                instruction=instruction,
+                history=history_text,
             )
 
             response = llm.invoke([
                 SystemMessage(content="You are a music editor. Respond with ONLY JSON."),
                 HumanMessage(content=prompt),
             ])
+
+            # Log raw LLM response
+            raw_content = getattr(response, 'content', str(response))
+            print(f"\n{'='*60}")
+            print(f"  LLM Raw Response (Iteration {iteration})")
+            print(f"{'='*60}")
+            print(raw_content)
+            print(f"{'='*60}\n")
 
             # Parse response
             try:

@@ -20,50 +20,23 @@ def build_diagnostic_context(diagnostic: MidiDiagnostic) -> str:
     return diagnostic.to_report()
 
 
-def build_fix_prompt(diagnostic_context: str, stem_type: str, reference_info: str = "") -> str:
+def build_fix_prompt(diagnostic_context: str, stem_type: str,
+                     reference_info: str = "", abc_notation: str = "") -> str:
     """Build the LLM prompt for MIDI fix judgment."""
-    prompt = f"""You are a music transcription quality expert. Analyze the diagnostic report below and produce fix instructions.
-
-## Context
-- **Stem type**: {stem_type}
-  - vocals: single-pitch monophonic melody (human voice). No overlapping notes. Typical range C3-C6 (MIDI 48-84).
-  - bass: low-frequency foundation. May have sustained notes and some overlap with other instruments but itself is monophonic.
-  - drums: percussion, typically MIDI channel 10. Not applicable here.
-  - other: mixed accompaniment, may be polyphonic.
-
-## Diagnostic Report
-{diagnostic_context}
-{reference_info}
-
-## Rules (apply based on stem type)
-For **vocals**:
-1. No overlap — simultaneous notes must be merged into a single note (pick the dominant one)
-2. Fragment chains (consecutive same-pitch) should be merged into sustained notes
-3. Notes outside typical vocal range (C3=48 to C6=84) should be flagged as likely noise
-4. Fragment rate > 3 events/sec for same pitch is likely a transcription artifact
-5. The result must be a clean, playable single-instrument melody line
-
-## Output Format (JSON only, no other text)
-Produce a JSON object with:
-{{
-  "summary": "brief assessment of the issues",
-  "fixes": [
-    {{
-      "type": "merge_overlap" | "merge_fragments" | "remove_out_of_range" | "normalize_velocity" | "estimate_bpm",
-      "description": "what to do",
-      "params": {{ ... specific parameters ... }},
-      "priority": "high" | "medium" | "low"
-    }}
-  ],
-  "estimated_clean_note_count": <number>
-}}
-"""
-    return prompt
+    from core.prompt_loader import load_prompt
+    template = load_prompt("midi_fixer")
+    return template.format(
+        stem_type=stem_type,
+        abc_notation=f"```abc\n{abc_notation}\n```" if abc_notation else "(not available)",
+        diagnostic_report=diagnostic_context,
+        reference_info=reference_info or "",
+    )
 
 
 def generate_fix_instructions(diagnostic: MidiDiagnostic,
                               stem_type: str = "vocals",
-                              reference_info: str = "") -> dict:
+                              reference_info: str = "",
+                              abc_notation: str = "") -> dict:
     """
     Generate fix instructions by calling LLM with diagnostic context.
 
@@ -71,12 +44,13 @@ def generate_fix_instructions(diagnostic: MidiDiagnostic,
         diagnostic: The diagnostic report.
         stem_type: 'vocals', 'bass', 'other', or 'drums'.
         reference_info: Optional reference info (e.g. ABC notation melody).
+        abc_notation: Full ABC notation (K:C) for global musical context.
 
     Returns:
         Dict with fix instructions, or fallback defaults if LLM unavailable.
     """
     context = build_diagnostic_context(diagnostic)
-    prompt = build_fix_prompt(context, stem_type, reference_info)
+    prompt = build_fix_prompt(context, stem_type, reference_info, abc_notation)
 
     try:
         import openai
@@ -98,7 +72,13 @@ def generate_fix_instructions(diagnostic: MidiDiagnostic,
                 ],
                 temperature=0.1,
             )
-            result = json.loads(response.choices[0].message.content)
+            raw = response.choices[0].message.content
+            print(f"\n{'='*60}")
+            print(f"  LLM Raw Response (MIDI Fixer)")
+            print(f"{'='*60}")
+            print(raw)
+            print(f"{'='*60}\n")
+            result = json.loads(raw)
             return result
     except Exception as e:
         print(f"  LLM judgment unavailable: {e}")
@@ -305,7 +285,7 @@ def fix_midi(midi_path: str, stem_type: str = "vocals",
         midi_path: Input MIDI file.
         stem_type: 'vocals', 'bass', 'other'.
         output_path: Output path (default: same name + _fixed.mid).
-        reference_info: Optional reference info for LLM.
+        reference_info: Optional ABC notation (K:C) for global musical context.
 
     Returns:
         Path to cleaned MIDI file.
@@ -321,8 +301,9 @@ def fix_midi(midi_path: str, stem_type: str = "vocals",
     print(diagnostic.to_report())
     print()
 
-    # Step 2: LLM judgment (with fallback)
-    fix_instructions = generate_fix_instructions(diagnostic, stem_type, reference_info)
+    # Step 2: LLM judgment (with ABC context for global view)
+    fix_instructions = generate_fix_instructions(diagnostic, stem_type,
+                                                 abc_notation=reference_info)
     print(f"  Fix instructions: {json.dumps(fix_instructions, indent=2, ensure_ascii=False)}")
     print()
 
@@ -364,12 +345,19 @@ def fix_midi_to_score(midi_path: str, stem_type: str = "vocals",
     print("=" * 50)
     print("Stage 1: MIDI fix (analysis → LLM → tool)")
     print("=" * 50)
-    fixed_mid = fix_midi(midi_path, stem_type, fixed_mid, reference_info)
+
+    # Generate ABC first for LLM context (before fixing, so LLM sees the raw state)
+    from core.midi_to_abc import midi_to_abc, read_abc
+    raw_abc_path = os.path.join(output_dir, f"{os.path.basename(base)}_raw.abc")
+    raw_abc_result = midi_to_abc(midi_path, raw_abc_path)
+    raw_abc_text = read_abc(raw_abc_path) if raw_abc_result else ""
+
+    fixed_mid = fix_midi(midi_path, stem_type, fixed_mid, raw_abc_text)
     if not fixed_mid:
         return None
 
     print("=" * 50)
-    print("Stage 2: MIDI → ABC")
+    print("Stage 2: MIDI → ABC (K:C)")
     print("=" * 50)
     abc_path = midi_to_abc(fixed_mid, abc_raw)
     if not abc_path:
