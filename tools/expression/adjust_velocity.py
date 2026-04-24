@@ -9,8 +9,6 @@ This creates clearer melody/accompaniment separation in the mix.
 
 import musicpy as mp
 
-from tools.analysis.voice_detection import detect_voice_roles
-
 
 class AdjustVelocityTool:
     """Adjust note velocities for dynamic balance."""
@@ -19,18 +17,22 @@ class AdjustVelocityTool:
     description = (
         "Adjust note velocities to create dynamic contrast between "
         "melody and accompaniment. "
-        "Args: melody_boost (int) - velocity increase for melody track (default 0), "
-        "accompaniment_reduce (int) - velocity decrease for accompaniment tracks (default 0). "
+        "Args: voice_roles (dict) - from Analyst {melody: [idxs], ...}, "
+        "melody_boost (int) - velocity increase for melody track (default 10), "
+        "accompaniment_reduce (int) - velocity decrease for accompaniment tracks (default 10). "
         "Returns the piece with adjusted velocities."
     )
 
-    def run(self, piece, melody_boost: int = 0,
-            accompaniment_reduce: int = 0) -> mp.P.__class__:
+    def run(self, piece, voice_roles: dict | None = None,
+            melody_boost: int = 10,
+            accompaniment_reduce: int = 10) -> mp.P:
         """
         Adjust note velocities.
 
         Args:
             piece: A musicpy piece object.
+            voice_roles: Dict from Analyst {melody: [idxs], harmony: [idxs], ...}.
+                        If None, auto-detect via detect_voice_roles.
             melody_boost: Amount to add to melody track velocity.
             accompaniment_reduce: Amount to subtract from accompaniment tracks.
 
@@ -41,8 +43,13 @@ class AdjustVelocityTool:
             return piece
 
         result = piece.copy()
-        roles = detect_voice_roles(piece)
-        melody_indices = set(roles.get('melody', []))
+
+        if voice_roles:
+            melody_indices = set(voice_roles.get('melody', []))
+        else:
+            from tools.analysis.voice_detection import detect_voice_roles
+            roles = detect_voice_roles(piece)
+            melody_indices = set(roles.get('melody', []))
 
         for track_idx, track in enumerate(result.tracks):
             notes = track.notes if hasattr(track, 'notes') else list(track)
