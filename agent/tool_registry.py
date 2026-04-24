@@ -70,8 +70,12 @@ class ArrangeForPianoTool(BaseTool):
         piece = get_piece_context()
         if piece is None:
             return "Error: No piece loaded. Please load a MIDI file first."
+        from tools.analysis.extract_melody import ExtractMelodyTool as _ExtractMelodyToolRaw
+        from tools.analysis.analyze_harmony import AnalyzeHarmonyTool as _AnalyzeHarmonyToolRaw
+        melody = _ExtractMelodyToolRaw().run(piece)
+        harmony = _AnalyzeHarmonyToolRaw().run(piece, granularity='measure')
         tool = _ArrangePianoTool()
-        result = tool.run(piece, style=style)
+        result = tool.run(piece, melody=melody, harmony=harmony, style=style)
         # Update the piece context with the arranged result
         set_piece_context(result)
         return _format_result(result)

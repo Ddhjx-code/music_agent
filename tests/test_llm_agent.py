@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from agent.prompt_templates import SYSTEM_PROMPT
+from tools.analysis.extract_melody import ExtractMelodyTool
+from tools.analysis.analyze_harmony import AnalyzeHarmonyTool
 
 
 @pytest.fixture
@@ -252,7 +254,9 @@ class TestFullLLMPipeline:
         assert 'classical' in str(result.get('style', ''))
 
         # Actually arrange
-        arranged = ArrangePianoTool().run(simple_melody_piece, style='classical')
+        melody = ExtractMelodyTool().run(simple_melody_piece)
+        harmony = AnalyzeHarmonyTool().run(simple_melody_piece, granularity='measure')
+        arranged = ArrangePianoTool().run(simple_melody_piece, melody=melody, harmony=harmony, style='classical')
         output_path = str(tmp_path / "output.mid")
         save_midi(arranged, output_path)
 
@@ -274,4 +278,5 @@ class TestFullLLMPipeline:
 
         assert os.path.exists(result_path)
         output = load_midi(result_path)
-        assert len(output.tracks) == 2
+        # Multi-role orchestrator may produce >2 tracks (arrangement + harmonist)
+        assert len(output.tracks) >= 2

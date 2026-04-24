@@ -21,8 +21,16 @@ from tools.expression.adjust_velocity import AdjustVelocityTool
 from tools.expression.timing_variation import ApplyTimingVariationTool
 from tools.validation.range_check import RangeCheckTool
 from tools.validation.theory_check import ValidateTheoryTool
+from tools.analysis.extract_melody import ExtractMelodyTool
 from tools.analysis.analyze_harmony import AnalyzeHarmonyTool
 from tools.harmony.generate_accompaniment import GenerateAccompanimentTool
+
+
+def _run_arrange(piece, style='classical'):
+    """Helper: extract melody/harmony then call ArrangePianoTool."""
+    melody = ExtractMelodyTool().run(piece)
+    harmony = AnalyzeHarmonyTool().run(piece, granularity='measure')
+    return ArrangePianoTool().run(piece, melody=melody, harmony=harmony, style=style)
 
 
 class TestPipelineIntegration:
@@ -43,7 +51,7 @@ class TestPipelineIntegration:
         assert summary['bpm'] == 120
 
         # Arrange
-        arranged = ArrangePianoTool().run(piece, style='classical')
+        arranged = _run_arrange(piece, style='classical')
 
         # Validate
         range_check = RangeCheckTool().run(arranged, instrument='piano')
@@ -64,7 +72,7 @@ class TestPipelineIntegration:
         save_midi(simple_melody_piece, input_path)
 
         piece = load_midi(input_path)
-        arranged = ArrangePianoTool().run(piece, style='romantic')
+        arranged = _run_arrange(piece, style='romantic')
 
         range_check = RangeCheckTool().run(arranged, instrument='piano')
         assert range_check['passed'] is True
@@ -82,7 +90,7 @@ class TestPipelineIntegration:
         save_midi(simple_melody_piece, input_path)
 
         piece = load_midi(input_path)
-        arranged = ArrangePianoTool().run(piece, style='pop')
+        arranged = _run_arrange(piece, style='pop')
 
         range_check = RangeCheckTool().run(arranged, instrument='piano')
         assert range_check['passed'] is True
@@ -97,7 +105,7 @@ class TestPipelineIntegration:
     def test_pipeline_preserves_melody(self, simple_melody_piece, tmp_path):
         """Melody notes from input appear in output."""
         piece = simple_melody_piece
-        arranged = ArrangePianoTool().run(piece, style='classical')
+        arranged = _run_arrange(piece, style='classical')
 
         # Get original melody degrees
         original_degrees = set()
@@ -118,9 +126,9 @@ class TestPipelineIntegration:
         """Different styles produce different accompaniment patterns."""
         piece = simple_melody_piece
 
-        classical = ArrangePianoTool().run(piece, style='classical')
-        romantic = ArrangePianoTool().run(piece, style='romantic')
-        pop = ArrangePianoTool().run(piece, style='pop')
+        classical = _run_arrange(piece, style='classical')
+        romantic = _run_arrange(piece, style='romantic')
+        pop = _run_arrange(piece, style='pop')
 
         # LH accompaniment should differ between styles
         classical_lh_count = len(classical.tracks[1])
@@ -148,7 +156,7 @@ class TestMultiTrackPipeline:
 
     def test_multi_track_arrangement_has_substantial_accompaniment(self, multi_track_piece):
         """Multi-track piece should produce meaningful accompaniment (>50 notes)."""
-        arranged = ArrangePianoTool().run(multi_track_piece, style='classical')
+        arranged = _run_arrange(multi_track_piece, style='classical')
 
         assert len(arranged.tracks) == 2
         lh_count = len(arranged.tracks[1])
@@ -156,7 +164,7 @@ class TestMultiTrackPipeline:
 
     def test_multi_track_range_check_passes(self, multi_track_piece):
         """Arranged multi-track piece should pass piano range check."""
-        arranged = ArrangePianoTool().run(multi_track_piece, style='classical')
+        arranged = _run_arrange(multi_track_piece, style='classical')
         range_check = RangeCheckTool().run(arranged, instrument='piano')
         assert range_check['passed'] is True
 
@@ -179,7 +187,7 @@ class TestMultiTrackPipeline:
         summary = generate_summary(piece)
         assert summary['num_measures'] >= 6
 
-        arranged = ArrangePianoTool().run(piece, style='classical')
+        arranged = _run_arrange(piece, style='classical')
         assert len(arranged.tracks) == 2
         assert len(arranged.tracks[1]) > 16  # LH accompaniment
 
@@ -267,7 +275,7 @@ class TestExpressionToolsIntegration:
 
     def test_velocity_chain_with_piano_arrangement(self, simple_melody_piece):
         """Piano arrange → velocity boost should produce louder melody."""
-        arranged = ArrangePianoTool().run(simple_melody_piece, style='classical')
+        arranged = _run_arrange(simple_melody_piece, style='classical')
         boosted = AdjustVelocityTool().run(arranged, melody_boost=15, accompaniment_reduce=10)
 
         melody_vel = sum(n.volume for n in boosted.tracks[0] if hasattr(n, 'volume')) / max(1, len([n for n in boosted.tracks[0] if hasattr(n, 'volume')]))
