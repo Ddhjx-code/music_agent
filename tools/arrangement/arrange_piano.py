@@ -1,11 +1,12 @@
 """
-Piano arrangement tool — simplified with musicpy.
+Piano arrangement tool — decoupled version.
+
+Accepts pre-extracted melody and harmony data from Analyst.
+No longer calls ExtractMelodyTool or AnalyzeHarmonyTool internally.
 """
 
 import musicpy as mp
 
-from tools.analysis.extract_melody import ExtractMelodyTool
-from tools.analysis.analyze_harmony import AnalyzeHarmonyTool
 from tools.harmony.generate_accompaniment import GenerateAccompanimentTool
 
 VALID_STYLES = {'classical', 'romantic', 'pop'}
@@ -16,22 +17,30 @@ class ArrangePianoTool:
 
     name = "arrange_for_piano"
     description = (
-        "Arrange a piece for piano solo. Extracts melody (RH) and "
-        "generates accompaniment (LH). Styles: classical, romantic, pop."
+        "Arrange a piece for piano solo using pre-extracted melody (RH) "
+        "and harmony data to generate accompaniment (LH). "
+        "Styles: classical, romantic, pop."
     )
 
-    def run(self, piece, style: str = 'classical',
-            voicing: str = 'closed', hand_split: str = 'auto') -> mp.P.__class__:
-        """Arrange for piano."""
+    def run(self, piece, melody: mp.chord, harmony: list[dict],
+            style: str = 'classical',
+            voicing: str = 'closed') -> mp.P:
+        """Arrange for piano using pre-extracted melody and harmony."""
         if style not in VALID_STYLES:
-            raise ValueError(f"Invalid style '{style}'. Must be: {', '.join(sorted(VALID_STYLES))}")
+            raise ValueError(
+                f"Invalid style '{style}'. Must be: {', '.join(sorted(VALID_STYLES))}"
+            )
 
-        melody = ExtractMelodyTool().run(piece)
-        harmony = AnalyzeHarmonyTool().run(piece, granularity='measure')
-
-        pattern_map = {'classical': 'broken_chord', 'romantic': 'arpeggio', 'pop': 'block_chord'}
+        pattern_map = {
+            'classical': 'broken_chord',
+            'romantic': 'arpeggio',
+            'pop': 'block_chord',
+        }
         accompaniment = GenerateAccompanimentTool().run(
-            harmony, style=style, pattern=pattern_map[style], voicing=voicing,
+            harmony,
+            style=style,
+            pattern=pattern_map[style],
+            voicing=voicing,
         )
 
         result = mp.P(
