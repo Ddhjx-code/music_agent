@@ -1,229 +1,153 @@
 """
-Orchestrator — LLM deep participation loop.
+Role Orchestrator — multi-role collaboration pipeline.
 
-The LLM sees structured JSON of the music, chooses actions, receives
-feedback JSON after each action, and loops until satisfied.
+Manages phase transitions between Planner, Analyst, Arranger,
+Harmonist, Expression, and Critic roles. Handles Critic bounce-back
+(max 2 retries per role).
 """
+
+from __future__ import annotations
 
 import json
 import os
-import re
+
+import musicpy as mp
 
 from core.music_io import load_midi, save_midi
-from core.music_transform import piece_to_json
-from agent.tool_registry import (
-    set_piece_context, get_piece_context,
-)
-from tools.arrangement.arrange_piano import ArrangePianoTool as _ArrangePianoTool
-from tools.analysis.extract_melody import ExtractMelodyTool as _ExtractMelodyTool
-from tools.analysis.analyze_harmony import AnalyzeHarmonyTool as _AnalyzeHarmonyTool
-from tools.harmony.generate_accompaniment import (
-    GenerateAccompanimentTool as _GenerateAccompanimentTool,
-)
-from tools.validation.range_check import RangeCheckTool as _RangeCheckTool
-from tools.arrangement.arrange_strings import ArrangeStringsTool as _ArrangeStringsTool
-from tools.arrangement.arrange_winds import ArrangeWindsTool as _ArrangeWindsTool
-from tools.expression.add_pedal import AddSustainPedalTool as _AddSustainPedalTool
-from tools.expression.adjust_velocity import AdjustVelocityTool as _AdjustVelocityTool
-from tools.expression.timing_variation import ApplyTimingVariationTool as _ApplyTimingVariationTool
+from core.roles.base import RoleContext
+from core.roles.analyst_role import AnalystRole
+from core.roles.planner_role import PlannerRole
+from core.roles.arranger_role import ArrangerRole
+from core.roles.harmonist_role import HarmonistRole
+from core.roles.expression_role import ExpressionRole
+from core.roles.critic_role import CriticRole
+from agent.tool_registry import set_piece_context, get_piece_context
 
-# Max iterations to prevent infinite loops
-MAX_ITERATIONS = 10
-
-from core.prompt_loader import load_prompt
+MAX_BOUNCES = 2
 
 
-def parse_llm_response(text: str) -> dict:
-    """Parse LLM response to extract JSON command."""
-    # Try markdown code block
-    match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', text, re.DOTALL)
-    if match:
-        return json.loads(match.group(1))
+class RoleOrchestrator:
+    """Orchestrate multi-role music processing pipeline."""
 
-    # Try to find JSON object
-    start = text.find('{')
-    if start != -1:
-        depth = 0
-        for i, c in enumerate(text[start:], start):
-            if c == '{':
-                depth += 1
-            elif c == '}':
-                depth -= 1
-                if depth == 0:
-                    return json.loads(text[start:i+1])
+    def __init__(self, llm):
+        self.llm = llm
 
-    raise ValueError(f"Could not parse JSON from: {text}")
+    def run(self, piece: mp.P, instruction: str) -> mp.P:
+        """Run the full pipeline."""
+        context = RoleContext(instruction)
+
+        # Phase 1: Pre-analysis (tools only, no LLM)
+        print("\n=== Phase 1: Pre-Analysis ===")
+        analyst = AnalystRole()
+        piece, _ = analyst.run_tools_only(piece, context)
+
+        # Phase 2: Planning
+        print("\n=== Phase 2: Planning ===")
+        planner = PlannerRole()
+        piece, plan = planner.run(piece, context, self.llm)
+
+        phases = plan.get("phases", [])
+        params = plan.get("params", {})
+
+        # Phase 3: Execute planned phases
+        for phase in phases:
+            if phase == "analysis":
+                # Re-run full analysis with LLM summary
+                print(f"\n=== Phase: Analysis ===")
+                piece, _ = analyst.run(piece, context, self.llm)
+
+            elif phase == "arrangement":
+                print(f"\n=== Phase: Arrangement ===")
+                arranger = ArrangerRole()
+                piece, _ = self._with_bounce_back(piece, context, arranger, "arrangement")
+
+            elif phase == "harmonist":
+                print(f"\n=== Phase: Harmonist ===")
+                harmonist = HarmonistRole()
+                piece, report = harmonist.run(piece, context, self.llm)
+                context.harmony_report = report
+
+            elif phase == "expression":
+                print(f"\n=== Phase: Expression ===")
+                expression = ExpressionRole()
+                piece, _ = self._with_bounce_back(piece, context, expression, "expression")
+
+        # Phase 4: Critic review
+        print("\n=== Phase: Critic Review ===")
+        critic = CriticRole()
+        piece, critic_report = critic.run(piece, context, self.llm)
+
+        # Handle bounce-back
+        if not critic_report.get("passed", True) and critic_report.get("issues"):
+            high_issues = [i for i in critic_report["issues"] if i.get("severity") == "high"]
+            if high_issues:
+                print(f"\n[Critic] {len(high_issues)} high-severity issue(s) found, bouncing back")
+                # Group issues by role and bounce back
+                roles_with_issues = set(i.get("role", "") for i in high_issues)
+                for role_name in roles_with_issues:
+                    context.critic_issues = [i for i in high_issues if i.get("role") == role_name]
+                    piece = self._bounce_back(piece, context, role_name)
+
+        return piece
+
+    def _with_bounce_back(self, piece: mp.P, context: RoleContext,
+                          role, role_key: str) -> tuple[mp.P, dict]:
+        """Run a role with bounce-back support."""
+        bounce_count = 0
+        while bounce_count <= MAX_BOUNCES:
+            piece, report = role.run(piece, context, self.llm)
+            if bounce_count >= MAX_BOUNCES:
+                break
+            # Check if critic wants bounce back (from previous Critic run)
+            if not context.critic_issues:
+                break
+            role_issues = [i for i in context.critic_issues if i.get("role") == role_key]
+            if not role_issues:
+                break
+            bounce_count += 1
+        return piece, report
+
+    def _bounce_back(self, piece: mp.P, context: RoleContext, role_name: str) -> mp.P:
+        """Bounce back to a specific role for rework."""
+        if role_name == "arranger":
+            arranger = ArrangerRole()
+            piece, _ = arranger.run(piece, context, self.llm)
+        elif role_name == "harmonist":
+            harmonist = HarmonistRole()
+            piece, _ = harmonist.run(piece, context, self.llm)
+        elif role_name == "expression":
+            expression = ExpressionRole()
+            piece, _ = expression.run(piece, context, self.llm)
+        return piece
 
 
-def execute_command(cmd: dict) -> str:
-    """Execute a single LLM command and return result string."""
-    action = cmd.get('action', '')
-    if isinstance(action, dict):
-        # LLM returned nested dict — unwrap
-        cmd = action
-        action = cmd.get('action', '')
-    piece = get_piece_context()
-
-    if action == 'arrange_for_piano':
-        style = cmd.get('style', 'classical')
-        result = _ArrangePianoTool().run(piece, style=style)
-        set_piece_context(result)
-        return f"Arranged for piano ({style}): {len(result.tracks)} tracks"
-
-    elif action == 'analyze_harmony':
-        result = _AnalyzeHarmonyTool().run(piece)
-        return f"Analyzed: {len(result)} chords"
-
-    elif action == 'extract_melody':
-        result = _ExtractMelodyTool().run(piece)
-        return f"Extracted melody: {len(result)} notes"
-
-    elif action == 'generate_accompaniment':
-        style = cmd.get('style', 'classical')
-        harmony = _AnalyzeHarmonyTool().run(piece)
-        pattern_map = {'classical': 'broken_chord', 'romantic': 'arpeggio', 'pop': 'block_chord'}
-        result = _GenerateAccompanimentTool().run(harmony, style=style, pattern=pattern_map.get(style, 'broken_chord'))
-        return f"Generated accompaniment: {len(result)} notes"
-
-    elif action == 'validate_range':
-        instrument = cmd.get('instrument', 'piano')
-        result = _RangeCheckTool().run(piece, instrument=instrument)
-        status = "PASSED" if result['passed'] else f"FAILED ({len(result['issues'])} issues)"
-        return f"Range check ({instrument}): {status}"
-
-    elif action == 'arrange_for_strings':
-        voicing = cmd.get('voicing', 'standard')
-        result = _ArrangeStringsTool().run(piece, voicing=voicing)
-        set_piece_context(result)
-        return f"Arranged for string quartet: {len(result.tracks)} tracks"
-
-    elif action == 'arrange_for_winds':
-        instrumentation = cmd.get('instrumentation', 'standard')
-        result = _ArrangeWindsTool().run(piece, instrumentation=instrumentation)
-        set_piece_context(result)
-        return f"Arranged for wind ensemble: {len(result.tracks)} tracks"
-
-    elif action == 'add_sustain_pedal':
-        mode = cmd.get('mode', 'harmonic_change')
-        result = _AddSustainPedalTool().run(piece, mode=mode)
-        set_piece_context(result)
-        return f"Added pedal events ({mode})"
-
-    elif action == 'adjust_velocity':
-        result = _AdjustVelocityTool().run(piece,
-                                           melody_boost=cmd.get('melody_boost', 0),
-                                           accompaniment_reduce=cmd.get('accompaniment_reduce', 0))
-        set_piece_context(result)
-        return f"Adjusted velocity"
-
-    elif action == 'apply_timing_variation':
-        result = _ApplyTimingVariationTool().run(piece,
-                                                  type=cmd.get('type', 'rubato'),
-                                                  amount=cmd.get('amount', 0.05))
-        set_piece_context(result)
-        return f"Applied {cmd.get('type', 'rubato')} timing"
-
-    else:
-        return f"Unknown action: {action}"
+# ── Backward compatibility ──────────────────────────────────────────
 
 
 def create_music_agent(llm):
-    """
-    Create a music agent with deep LLM participation.
+    """Deprecated: use RoleOrchestrator instead."""
+    import warnings
+    warnings.warn("create_music_agent is deprecated. Use RoleOrchestrator.", DeprecationWarning)
 
-    The LLM sees: structured JSON of the current music state.
-    The LLM does: choose one action at a time, or signal done.
-    After each action: the updated music JSON is sent back as feedback.
-    """
-    def agent_fn(piece, instruction: str) -> list[tuple[dict, str]]:
-        from langchain_core.messages import SystemMessage, HumanMessage
+    orchestrator = RoleOrchestrator(llm)
 
-        # Set piece into global context so execute_command can access it
-        set_piece_context(piece)
-
-        # Convert piece to JSON for LLM
-        music_json = piece_to_json(piece)
-
-        history = []
-        results = []
-        iteration = 0
-        used_actions = set()
-
-        while iteration < MAX_ITERATIONS:
-            iteration += 1
-
-            # Build prompt with current music state
-            history_text = json.dumps(history[-3:], indent=2) if history else "(none yet)"
-            template = load_prompt("orchestrator")
-            prompt = template.format(
-                music_json=json.dumps(music_json, indent=2),
-                instruction=instruction,
-                history=history_text,
-            )
-
-            response = llm.invoke([
-                SystemMessage(content="You are a music editor. Respond with ONLY JSON."),
-                HumanMessage(content=prompt),
-            ])
-
-            # Log raw LLM response
-            raw_content = getattr(response, 'content', str(response))
-            print(f"\n{'='*60}")
-            print(f"  LLM Raw Response (Iteration {iteration})")
-            print(f"{'='*60}")
-            print(raw_content)
-            print(f"{'='*60}\n")
-
-            # Parse response
-            try:
-                cmd = parse_llm_response(response.content)
-            except (json.JSONDecodeError, ValueError):
-                # Fallback: if LLM doesn't return valid JSON, stop loop
-                break
-
-            # Check if done
-            if cmd.get('done', False):
-                break
-
-            action_key = json.dumps(cmd, sort_keys=True)
-            action_name = cmd.get('action', '')
-            if isinstance(action_name, dict):
-                action_name = action_name.get('action', '')
-            if action_key in used_actions or action_name in {'arrange_for_piano', 'arrange_for_strings', 'arrange_for_winds'}:
-                if action_key in used_actions:
-                    print(f"  [{iteration}] Skipping duplicate action: {action_name}")
-                    continue
-
-            # Execute command
-            print(f"  [{iteration}] Executing: {json.dumps(cmd)}")
-            result_text = execute_command(cmd)
-            print(f"  [{iteration}] Result: {result_text}")
-
-            results.append((cmd, result_text))
-            history.append({'action': cmd, 'result': result_text})
-            used_actions.add(action_key)
-
-            # Update music JSON for next iteration
-            current_piece = get_piece_context()
-            music_json = piece_to_json(current_piece)
-
-        return results
+    def agent_fn(piece, instruction: str):
+        result_piece = orchestrator.run(piece, instruction)
+        set_piece_context(result_piece)
+        return []
 
     return agent_fn
 
 
 def run_pipeline(midi_path: str, instruction: str, llm,
                  output_path: str = None) -> str:
-    """
-    Run the full Music Agent pipeline with LLM loop participation.
-    """
+    """Run the full Music Agent pipeline with multi-role orchestration."""
     piece = load_midi(midi_path)
     set_piece_context(piece)
 
-    agent = create_music_agent(llm)
-    results = agent(piece, instruction)
+    orchestrator = RoleOrchestrator(llm)
+    result_piece = orchestrator.run(piece, instruction)
 
-    result_piece = get_piece_context()
     if output_path is None:
         base, ext = os.path.splitext(midi_path)
         output_path = f"{base}_arranged{ext}"
