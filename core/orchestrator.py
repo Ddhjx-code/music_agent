@@ -36,6 +36,10 @@ class RoleOrchestrator:
         """Run the full pipeline."""
         context = RoleContext(instruction)
 
+        # Phase 0: MIDI Fix (cleanup fragmentation, overlaps, out-of-range)
+        print("\n=== Phase 0: MIDI Fix ===")
+        piece = self._fix_midi(piece)
+
         # Phase 1: Pre-analysis (tools only, no LLM)
         print("\n=== Phase 1: Pre-Analysis ===")
         analyst = AnalystRole()
@@ -72,21 +76,54 @@ class RoleOrchestrator:
                 expression = ExpressionRole()
                 piece, _ = self._with_bounce_back(piece, context, expression, "expression")
 
-        # Phase 4: Critic review
+        # Phase 4: Critic review (with validation loop)
         print("\n=== Phase: Critic Review ===")
         critic = CriticRole()
         piece, critic_report = critic.run(piece, context, self.llm)
 
-        # Handle bounce-back
-        if not critic_report.get("passed", True) and critic_report.get("issues"):
-            high_issues = [i for i in critic_report["issues"] if i.get("severity") == "high"]
-            if high_issues:
-                print(f"\n[Critic] {len(high_issues)} high-severity issue(s) found, bouncing back")
-                # Group issues by role and bounce back
-                roles_with_issues = set(i.get("role", "") for i in high_issues)
-                for role_name in roles_with_issues:
-                    context.critic_issues = [i for i in high_issues if i.get("role") == role_name]
-                    piece = self._bounce_back(piece, context, role_name)
+        bounce_count = 0
+        while (not critic_report.get("passed", True)
+               and bounce_count < MAX_BOUNCES):
+            high_issues = [i for i in critic_report.get("issues", [])
+                           if i.get("severity") == "high"]
+            if not high_issues:
+                break
+            bounce_count += 1
+            print(f"\n[Critic] Bounce-back #{bounce_count}")
+            roles_with_issues = set(i.get("role", "") for i in high_issues)
+            for role_name in roles_with_issues:
+                context.critic_issues = [i for i in high_issues
+                                         if i.get("role") == role_name]
+                piece = self._bounce_back(piece, context, role_name)
+            # Re-run Critic to verify fixes
+            piece, critic_report = critic.run(piece, context, self.llm)
+
+        return piece
+
+    def _fix_midi(self, piece: mp.P) -> mp.P:
+        """Run MIDI fix pipeline on a piece to clean up transcription artifacts."""
+        import tempfile
+        from core.midi_fixer import fix_midi, _rule_based_fallback
+
+        # Save piece to temp MIDI
+        tmp = tempfile.NamedTemporaryFile(suffix=".mid", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+
+        from core.music_io import save_midi, load_midi
+        save_midi(piece, tmp_path)
+
+        try:
+            fixed_path = fix_midi(tmp_path, stem_type="vocals")
+            if fixed_path and os.path.exists(fixed_path):
+                result = load_midi(fixed_path)
+                if result and result.tracks:
+                    print(f"  MIDI fix: {len(piece.tracks)} track(s), "
+                          f"notes before={sum(len(t) for t in piece.tracks)}, "
+                          f"after={sum(len(t) for t in result.tracks)}")
+                    return result
+        except Exception as e:
+            print(f"  MIDI fix error: {e}, using original piece")
 
         return piece
 

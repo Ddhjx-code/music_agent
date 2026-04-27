@@ -27,16 +27,16 @@ For **vocals**:
 ## Output Format (JSON only, no other text)
 Produce a JSON object with:
 ```json
-{
+{{
   "summary": "brief assessment of the issues",
   "fixes": [
-    {
+    {{
       "type": "merge_overlap" | "merge_fragments" | "remove_out_of_range" | "normalize_velocity" | "estimate_bpm",
       "description": "what to do",
-      "params": { ... specific parameters ... },
+      "params": {{ ... specific parameters ... }},
       "priority": "high" | "medium" | "low"
-    }
+    }}
   ],
   "estimated_clean_note_count": <number>
-}
+}}
 ```
