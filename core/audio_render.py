@@ -20,7 +20,6 @@ SOUNDFONT_CANDIDATES = [
     '/usr/share/sounds/sf2/FluidR3_GM.sf2',
     '/usr/share/sounds/sf2/TimGM6mb.sf2',
     # Project-local
-    'assets/YDP_GrandPiano.sf2',
     'assets/FluidR3_GM.sf2',
 ]
 

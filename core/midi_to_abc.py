@@ -120,80 +120,114 @@ def _midi_to_abc_pitch(midi_note: int) -> str:
 
 
 def _events_to_voice_lines(events: list[tuple[float, float, int]], bar_len: int = 8) -> list[str]:
-    """Convert a list of (start_beats, dur_beats, midi_note) to ABC measure strings.
+    """Convert events to ABC measure strings.
 
-    Uses L:1/8, so 1 beat = 2 ABC units, 1 bar = 8 ABC units (4/4).
+    Uses L:1/8.  Each bar is self-contained — no ties across bar boundaries.
+    Notes crossing bar boundaries are split into separate notes per bar.
+    Every bar is filled to exactly 8 units using standard ABC durations.
     """
     if not events:
         return []
 
-    converted = []
+    UNIT_PER_BEAT = 2  # At L:1/8, quarter note = 2 units
+    BAR_LEN = 8        # 4/4 bar = 8 eighth-notes
+
+    def _emit_single(units: int, pitch_str: str, is_rest: bool = False) -> str:
+        """Emit a single note/rest with a standard ABC duration suffix."""
+        base = 'z' if is_rest else pitch_str
+        return {
+            1: base, 2: base + '2', 3: base + '3', 4: base + '4',
+            6: base + '6', 8: base + '8',
+        }.get(units, base)
+
+    def _emit_tied(units: int, pitch_str: str, is_rest: bool = False) -> str:
+        """Emit duration as sum of standard values, joined by ties (or spaces for rests)."""
+        if units <= 0:
+            return 'z'
+        # Greedy decomposition into standard values
+        STANDARD_DURS = [8, 6, 4, 3, 2, 1]
+        parts = []
+        remaining = units
+        while remaining > 0:
+            for d in STANDARD_DURS:
+                if d <= remaining:
+                    parts.append(d)
+                    remaining -= d
+                    break
+            else:
+                break  # safety
+        if len(parts) == 1:
+            return _emit_single(parts[0], pitch_str, is_rest)
+        if is_rest:
+            return ' '.join(_emit_single(p, pitch_str, True) for p in parts)
+        return '-'.join(_emit_single(p, pitch_str, False) for p in parts)
+
+    # Convert events and split at bar boundaries
+    bar_events: dict[int, list[tuple[int, int, str]]] = {}
     for start, dur, note in events:
-        start_8ths = max(0, int(round(start * 2)))
-        dur_8ths = max(1, int(round(dur * 2)))
+        start_u = max(0, int(round(start * UNIT_PER_BEAT)))
+        dur_u = max(1, int(round(dur * UNIT_PER_BEAT)))
         pitch = _midi_to_abc_pitch(note)
-        converted.append((start_8ths, dur_8ths, pitch))
+        end_u = start_u + dur_u
 
-    last_start, last_dur, _ = converted[-1]
-    total_8ths = last_start + last_dur
-    total_8ths = ((total_8ths + bar_len - 1) // bar_len) * bar_len
+        bar_idx = start_u // BAR_LEN
+        pos = start_u
+        while pos < end_u:
+            bar_end = (bar_idx + 1) * BAR_LEN
+            seg_end = min(end_u, bar_end)
+            seg_dur = seg_end - pos
+            if seg_dur > 0:
+                bar_events.setdefault(bar_idx, []).append((pos, seg_dur, pitch))
+            pos = seg_end
+            bar_idx += 1
 
-    # Per-8th occupancy
-    occupancy = [set() for _ in range(total_8ths)]
-    for s8, d8, pitch in converted:
-        for t in range(s8, min(s8 + d8, total_8ths)):
-            occupancy[t].add(pitch)
+    last_bar_idx = max(bar_events.keys()) if bar_events else 0
 
     measures = []
-    bar_parts = []
-    bar_dur = 0
-    pos = 0
+    for bar_idx in range(last_bar_idx + 1):
+        segs = bar_events.get(bar_idx, [])
+        if not segs:
+            measures.append('z8')
+            continue
 
-    while pos < total_8ths:
-        if bar_dur >= bar_len:
-            measures.append(''.join(bar_parts))
-            bar_parts = []
-            bar_dur = 0
+        bar_start = bar_idx * BAR_LEN
+        occupancy = [set() for _ in range(BAR_LEN)]
+        for su, du, pitch in segs:
+            local = su - bar_start
+            for t in range(local, min(local + du, BAR_LEN)):
+                occupancy[t].add(pitch)
 
-        current_pitches = occupancy[pos]
-        remaining = bar_len - bar_dur
-
-        if not current_pitches:
-            run_len = 0
-            while (pos + run_len < total_8ths
-                   and not occupancy[pos + run_len]
-                   and run_len < remaining):
-                run_len += 1
-            if run_len == 0:
-                run_len = 1
-            bar_parts.append(_dur_str(run_len, is_rest=True))
-        else:
-            run_len = 1
-            while (pos + run_len < total_8ths
-                   and occupancy[pos + run_len] == current_pitches
-                   and run_len < remaining):
-                run_len += 1
-
-            if len(current_pitches) == 1:
-                pitch = next(iter(current_pitches))
-                bar_parts.append(pitch + _dur_str(run_len))
+        bar_parts = []
+        pos = 0
+        while pos < BAR_LEN:
+            current = occupancy[pos]
+            if not current:
+                run = 0
+                while pos + run < BAR_LEN and not occupancy[pos + run]:
+                    run += 1
+                bar_parts.append(_emit_tied(run, 'z', is_rest=True))
+                pos += run
             else:
-                chord_str = '[' + ''.join(sorted(current_pitches)) + ']'
-                bar_parts.append(chord_str + _dur_str(run_len))
+                run = 1
+                while pos + run < BAR_LEN and occupancy[pos + run] == current:
+                    run += 1
+                if len(current) == 1:
+                    pitch = next(iter(current))
+                    bar_parts.append(_emit_tied(run, pitch))
+                else:
+                    chord_str = '[' + ''.join(sorted(current)) + ']'
+                    bar_parts.append(_emit_tied(run, chord_str))
+                pos += run
 
-        bar_dur += run_len
-        pos += run_len
-
-    if bar_parts:
-        measures.append(''.join(bar_parts))
+        measures.append(' '.join(bar_parts))
 
     return measures
 
 
 def _write_multi_voice_abc(path: str, midi_path: str, bpm: float,
                            voices: list[tuple[int, list]]) -> str | None:
-    """Write multi-voice ABC file using [V:N] inline voice syntax."""
-    lines = [
+    """Write multi-voice ABC file using voice-grouped format (abc2midi-friendly)."""
+    header = [
         "X: 1",
         f"T: from {midi_path}",
         "M: 4/4",
@@ -202,22 +236,30 @@ def _write_multi_voice_abc(path: str, midi_path: str, bpm: float,
         "K:C",
     ]
 
+    voice_measures = []
     for i, (_track_idx, events) in enumerate(voices):
-        voice_num = i + 1
         measures = _events_to_voice_lines(events)
-
         if not measures:
             continue
+        clef = "treble" if i == 0 else "bass"
+        voice_measures.append((i + 1, clef, measures))
 
-        # Declare voices at top
-        if i == 0:
-            lines.append(f"V:{voice_num} clef=treble")
-        else:
-            lines.append(f"V:{voice_num} clef=bass")
+    if not voice_measures:
+        return None
 
-        # Write measures with inline voice switches
+    max_bars = max(len(m) for _, _, m in voice_measures)
+    for idx, (vn, clef, measures) in enumerate(voice_measures):
+        while len(measures) < max_bars:
+            measures.append('z8')
+        voice_measures[idx] = (vn, clef, measures)
+
+    lines = header[:]
+    for vn, clef, _ in voice_measures:
+        lines.append(f"V:{vn} clef={clef}")
+
+    for vn, _, measures in voice_measures:
         for m in measures:
-            lines.append(f"[V:{voice_num}] {m} |")
+            lines.append(f"[V:{vn}] {m} |")
 
     parent = os.path.dirname(path)
     if parent:
@@ -229,32 +271,51 @@ def _write_multi_voice_abc(path: str, midi_path: str, bpm: float,
 
 
 
-def _dur_str(units: int, is_rest: bool = False) -> str:
-    """Convert duration in 8th-note units to ABC duration suffix.
+def _dur_to_abc(units: int, pitch_str: str, is_rest: bool = False) -> str:
+    """Convert duration in 1/16-note units to unambiguous ABC notation.
 
-    With L:1/8:  1=8th (empty suffix), 2=quarter, 3=dotted-quarter,
-                  4=half, 6=dotted-half, 8=whole.
-    Multipliers >1 use the number directly: 3=3 eighths, 5=5 eighths, etc.
+    With L:1/16:  4=quarter, 2=eighth, 8=half, 16=whole.
+    Non-standard durations are split into tied notes.
+    E.g. 5 sixteenths = pitch4 + pitch1 (quarter tied to sixteenth).
+
+    This avoids the ambiguity where abc2midi interprets `c5` as C-octave-5
+    rather than C with duration 5.
     """
-    if is_rest:
-        base = 'z'
-    else:
-        if units == 1:
-            return ''
-        base = ''
+    if units <= 0:
+        return 'z'
 
-    if units == 2:
-        return base + '2'
-    elif units == 3:
-        return base + '3'
-    elif units == 4:
-        return base + '4'
-    elif units == 6:
-        return base + '6'
-    elif units == 8:
-        return base + '8'
-    else:
-        return base + str(units)
+    # Standard ABC duration values at L:1/16 (all unambiguous)
+    # 1=sixteenth(/2), 2=eighth, 3=dotted-eighth(3/2), 4=quarter(2),
+    # 6=dotted-quarter(3), 8=half(4), 12=dotted-half(6), 16=whole(8)
+    def _single(u, p, rest):
+        base = 'z' if rest else p
+        return {
+            1: base + '/2', 2: base, 3: base + '3/2', 4: base + '2',
+            6: base + '3', 8: base + '4', 12: base + '6', 16: base + '8',
+        }.get(u, f'{base}{u}')
+
+    # Always split into standard durations
+    parts = []
+    remaining = units
+    while remaining > 0:
+        if remaining >= 16:
+            parts.append(_single(16, pitch_str, is_rest)); remaining -= 16
+        elif remaining >= 12:
+            parts.append(_single(12, pitch_str, is_rest)); remaining -= 12
+        elif remaining >= 8:
+            parts.append(_single(8, pitch_str, is_rest)); remaining -= 8
+        elif remaining >= 6:
+            parts.append(_single(6, pitch_str, is_rest)); remaining -= 6
+        elif remaining >= 4:
+            parts.append(_single(4, pitch_str, is_rest)); remaining -= 4
+        elif remaining >= 3:
+            parts.append(_single(3, pitch_str, is_rest)); remaining -= 3
+        elif remaining >= 2:
+            parts.append(_single(2, pitch_str, is_rest)); remaining -= 2
+        else:
+            parts.append(_single(1, pitch_str, is_rest)); remaining -= 1
+
+    return '-'.join(parts)
 
 
 # ── ABC → MIDI (uses abc2midi CLI) ──────────────────────────────────
