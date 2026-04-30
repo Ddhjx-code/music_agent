@@ -139,14 +139,8 @@ class GenerateAccompanimentTool:
 
     def _chord_str_to_notes(self, chord_str: str) -> list:
         """Parse chord name string to musicpy notes."""
-        try:
-            c = mp.chord(chord_str)
-            notes = list(c)
-            if all(hasattr(n, 'name') and len(getattr(n, 'name', '')) <= 3 for n in notes):
-                return notes
-        except Exception:
-            pass
-
+        # Always parse root + quality ourselves. mp.chord('C11') interprets '11' as
+        # octave 11, not as a chord extension, so we cannot rely on it.
         match = re.match(r'^(?:note\s+)?([A-G][#b]?)(.*)', chord_str)
         if not match:
             return []
@@ -232,11 +226,14 @@ class GenerateAccompanimentTool:
             fifth = mp.note('G', getattr(root, 'num', 4) + 1)
             chord_notes = [root, fifth, mp.note('E', getattr(root, 'num', 4))]
 
+        # One bar = 4 quarter notes = 8 eighth-note Alberti pattern
+        # Pattern: root-top-mid-top (i, 2, 1, 2) repeated 8 times for 4 beats
         pattern_idx = [0, 2, 1, 2]
+        notes_per_bar = 8
         notes = []
         timings = []
 
-        for _ in range(8):
+        for _ in range(notes_per_bar):
             idx = pattern_idx[len(notes) % len(pattern_idx)]
             cn = chord_notes[idx % len(chord_notes)]
             new_note = mp.note(
