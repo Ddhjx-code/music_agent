@@ -1,0 +1,89 @@
+<h2>角色详细设计</h2>
+<p class="subtitle">6 个角色的职责、工具、输出格式</p>
+
+<div class="section" style="border-left:3px solid #ffa500;padding-left:12px;margin-bottom:16px;">
+  <h3>1. Planner — 计划控制器</h3>
+  <p><strong>职责：</strong>解析用户指令，决定走哪些阶段、传什么参数</p>
+  <p><strong>LLM 调用：</strong>1 次（不循环）</p>
+  <p><strong>输入：</strong>用户指令 + Analyst 预分析报告</p>
+  <p><strong>输出：</strong><code>JSON {phases: ["analysis", "arrangement", "expression"], params: {...}}</code></p>
+  <p><strong>工具：</strong>无 — 纯决策，不调用音乐工具</p>
+  <p><strong>prompt：</strong><code>prompts/planner.md</code></p>
+  <div class="pros-cons">
+    <div class="pros"><h4>为什么不用循环</h4><ul><li>只做路由，一次决策足够</li><li>避免 Planner 陷入无意义循环</li></ul></div>
+    <div class="cons"><h4>风险</h4><ul><li>如果用户指令模糊，可能路由错误</li><li>需要 Analyst 预分析提供上下文</li></ul></div>
+  </div>
+</div>
+
+<div class="section" style="border-left:3px solid #4caf50;padding-left:12px;margin-bottom:16px;">
+  <h3>2. Analyst — 音乐分析师</h3>
+  <p><strong>职责：</strong>提取旋律、检测和声、识别声部角色、音域诊断</p>
+  <p><strong>LLM 调用：</strong>1 次（读取分析报告后做诊断总结）</p>
+  <p><strong>输入：</strong>musicpy piece</p>
+  <p><strong>输出：</strong><code>JSON {melody: {...}, harmony: [...], voice_roles: {...}, range_issues: [...]}</code></p>
+  <p><strong>工具：</strong><code>extract_melody</code>, <code>analyze_harmony</code>, <code>range_check</code>, <code>voice_detection</code></p>
+  <p><strong>prompt：</strong><code>prompts/analyst.md</code></p>
+  <div class="pros-cons">
+    <div class="pros"><h4>只读不写</h4><ul><li>不修改 piece，纯分析</li><li>产出结构化报告供下游角色使用</li></ul></div>
+    <div class="cons"><h4>注意</h4><ul><li>ABC notation 可作为附加上下文</li><li>range_check 结果供 Critic 评审</li></ul></div>
+  </div>
+</div>
+
+<div class="section" style="border-left:3px solid #2196f3;padding-left:12px;margin-bottom:16px;">
+  <h3>3. Arranger — 编排师</h3>
+  <p><strong>职责：</strong>根据 Planner 计划和 Analyst 报告，编排乐器布局、声部映射</p>
+  <p><strong>LLM 调用：</strong>可循环 2-3 次（编排 → 反馈 → 调整）</p>
+  <p><strong>输入：</strong>piece + Analyst 报告 + Planner 参数</p>
+  <p><strong>输出：</strong>修改后的 piece + <code>JSON {arrangement: "...", tracks_added: N, voice_mapping: {...}}</code></p>
+  <p><strong>工具：</strong><code>arrange_for_piano</code>, <code>arrange_for_strings</code>, <code>arrange_for_winds</code></p>
+  <p><strong>prompt：</strong><code>prompts/arranger.md</code></p>
+  <div class="pros-cons">
+    <div class="pros"><h4>有限循环</h4><ul><li>2-3 次循环允许微调</li><li>每次循环后反馈结构化报告</li></ul></div>
+    <div class="cons"><h4>风险</h4><ul><li>编排工具内部耦合（如 ArrangePiano 内部调用了 Analysis）</li><li>需要解耦或重构</li></ul></div>
+  </div>
+</div>
+
+<div class="section" style="border-left:3px solid #ff9800;padding-left:12px;margin-bottom:16px;">
+  <h3>4. Harmonist — 和声师</h3>
+  <p><strong>职责：</strong>生成伴奏、调整和弦走向</p>
+  <p><strong>LLM 调用：</strong>可循环 2 次</p>
+  <p><strong>输入：</strong>piece + Analyst 和声报告 + Planner 参数</p>
+  <p><strong>输出：</strong>追加的伴奏 track + <code>JSON {style: "...", pattern: "...", notes_added: N}</code></p>
+  <p><strong>工具：</strong><code>generate_accompaniment</code></p>
+  <p><strong>prompt：</strong><code>prompts/harmonist.md</code></p>
+  <p><strong>注意：</strong>可选角色，Planner 计划中不包含则跳过</p>
+</div>
+
+<div class="section" style="border-left:3px solid #9c27b0;padding-left:12px;margin-bottom:16px;">
+  <h3>5. Expression — 表情工程师</h3>
+  <p><strong>职责：</strong>力度调整、时序变化、踏板事件</p>
+  <p><strong>LLM 调用：</strong>可循环 2-3 次</p>
+  <p><strong>输入：</strong>piece + 前序角色报告</p>
+  <p><strong>输出：</strong>最终 piece + <code>JSON {velocity_changes: N, timing_type: "...", pedal_events: N}</code></p>
+  <p><strong>工具：</strong><code>adjust_velocity</code>, <code>apply_timing_variation</code>, <code>add_sustain_pedal</code></p>
+  <p><strong>prompt：</strong><code>prompts/expression.md</code></p>
+  <p><strong>注意：</strong>只在编排完成后执行，不应改变音符结构</p>
+</div>
+
+<div class="section" style="border-left:3px solid #f44336;padding-left:12px;margin-bottom:16px;">
+  <h3>6. Critic — 质量评审</h3>
+  <p><strong>职责：</strong>最终质量把关，检查音域、和声合理性、力度平衡、整体连贯性</p>
+  <p><strong>LLM 调用：</strong>1 次</p>
+  <p><strong>输入：</strong>最终 piece + 所有角色报告</p>
+  <p><strong>输出：</strong><code>JSON {passed: bool, issues: [{role: "...", severity: "high|medium|low", description: "...", fix_instruction: "..."}]}</code></p>
+  <p><strong>工具：</strong><code>range_check</code>（只读验证）</p>
+  <p><strong>prompt：</strong><code>prompts/critic.md</code></p>
+  <p><strong>打回规则：</strong>有 high severity issue → 打回对应角色重做（最多 2 次）</p>
+</div>
+
+<div style="margin-top:24px;padding:12px;background:#f5f5f5;border-radius:6px;">
+  <h3 style="margin-top:0;">文件变更清单</h3>
+  <table style="width:100%;font-size:13px;border-collapse:collapse;">
+    <tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd;">文件</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd;">改动</th></tr>
+    <tr><td style="padding:4px 8px;">core/orchestrator.py</td><td style="padding:4px 8px;">重写为 RoleOrchestrator，管理角色调度和打回循环</td></tr>
+    <tr><td style="padding:4px 8px;">core/roles/ (新目录)</td><td style="padding:4px 8px;">6 个角色模块，每个有独立 run() 方法和 prompt 加载</td></tr>
+    <tr><td style="padding:4px 8px;">prompts/*.md</td><td style="padding:4px 8px;">新增 6 个角色 prompt 模板</td></tr>
+    <tr><td style="padding:4px 8px;">agent/tool_registry.py</td><td style="padding:4px 8px;">增加角色工具子集映射</td></tr>
+    <tr><td style="padding:4px 8px;">tools/arrangement/*.py</td><td style="padding:4px 8px;">解耦：Arranger 内部不再隐式调用 Analysis 工具</td></tr>
+  </table>
+</div>

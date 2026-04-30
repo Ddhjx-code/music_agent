@@ -1,0 +1,9 @@
+{"type":"server-started","port":54574,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:54574","screen_dir":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/content","state_dir":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/state"}
+{"type":"screen-added","file":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/content/architecture.html"}
+{"type":"screen-updated","file":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/content/architecture.html"}
+{"type":"screen-added","file":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/content/waiting.html"}
+{"type":"screen-updated","file":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/content/waiting.html"}
+{"type":"screen-added","file":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/content/design-overview.html"}
+{"type":"screen-updated","file":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/content/design-overview.html"}
+{"type":"screen-added","file":"/Users/duanchao.wzj/AI/workspace/music_agent/.superpowers/brainstorm/37012-1776941394/content/role-details.html"}
+{"type":"server-stopped","reason":"idle timeout"}

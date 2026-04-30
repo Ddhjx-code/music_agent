@@ -1,0 +1,79 @@
+<h2>当前架构 vs 多角色协作架构</h2>
+<p class="subtitle">点击查看你想深入讨论的方向</p>
+
+<div class="cards">
+  <div class="card" data-choice="current" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f8f8f8;padding:16px;font-family:monospace;font-size:11px;line-height:1.5;color:#333;">
+      <div style="text-align:center;margin-bottom:8px;"><strong>当前：单 LLM 扁平循环</strong></div>
+      <div style="display:flex;flex-direction:column;gap:4px;align-items:center;">
+        <div style="background:#e8e8e8;padding:6px 12px;border-radius:4px;">LLM: "选一个 action"</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#d4e8ff;padding:6px 12px;border-radius:4px;">execute_command (10个 if/elif)</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#e8e8e8;padding:6px 12px;border-radius:4px;">返回一行结果文本</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#e8e8e8;padding:6px 12px;border-radius:4px;">重复 10 次或直到 {"done": true}</div>
+      </div>
+      <div style="margin-top:8px;color:#999;font-size:10px;">问题：LLM 只是按钮点击者，无角色分工，无阶段概念</div>
+    </div>
+    <div class="card-body">
+      <h3>现状（待改进）</h3>
+      <p>单 LLM，扁平 action 菜单，无阶段划分，产出质量不可控</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="multirole" onclick="toggleSelect(this)" style="border:2px solid #4a90d9;">
+    <div class="card-image" style="background:#f0f7ff;padding:16px;font-family:monospace;font-size:11px;line-height:1.5;color:#333;">
+      <div style="text-align:center;margin-bottom:8px;"><strong>提案：多角色协作流水线</strong></div>
+      <div style="display:flex;flex-direction:column;gap:4px;align-items:center;">
+        <div style="background:#ffe8cc;padding:6px 12px;border-radius:4px;">🎯 Planner — 分析需求，制定计划</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#e8ffe8;padding:6px 12px;border-radius:4px;">🔍 Analyst — 提取旋律、和声、音域诊断</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#d4e8ff;padding:6px 12px;border-radius:4px;">🎼 Arranger — 编排乐器布局、声部映射</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#fff0d4;padding:6px 12px;border-radius:4px;">🎹 Harmonist — 生成伴奏、和弦走向</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#f0d4ff;padding:6px 12px;border-radius:4px;">🎭 Expression — 力度、时序、踏板</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#ffd4d4;padding:6px 12px;border-radius:4px;">✅ Critic — 质量评审，不通过打回</div>
+      </div>
+      <div style="margin-top:8px;color:#555;font-size:10px;">每个角色有自己的 prompt 和工具子集，产出结构化报告</div>
+    </div>
+    <div class="card-body">
+      <h3>多角色协作（推荐）</h3>
+      <p>Planner → Analyst → Arranger → Harmonist → Expression → Critic，每个角色专精其职</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="hybrid" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f8f8f8;padding:16px;font-family:monospace;font-size:11px;line-height:1.5;color:#333;">
+      <div style="text-align:center;margin-bottom:8px;"><strong>折中：分阶段 + 单 LLM</strong></div>
+      <div style="display:flex;flex-direction:column;gap:4px;align-items:center;">
+        <div style="background:#ffe8cc;padding:6px 12px;border-radius:4px;">Phase 1: 分析阶段（只能调 analysis 工具）</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#d4e8ff;padding:6px 12px;border-radius:4px;">Phase 2: 编排阶段（只能调 arrangement 工具）</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#f0d4ff;padding:6px 12px;border-radius:4px;">Phase 3: 表达阶段（只能调 expression 工具）</div>
+        <div style="color:#999;">↓</div>
+        <div style="background:#ffd4d4;padding:6px 12px;border-radius:4px;">Phase 4: 验证阶段（range check，自动打回）</div>
+      </div>
+      <div style="margin-top:8px;color:#999;font-size:10px;">同一个 LLM，但每个阶段只开放对应工具，prompt 自动切换</div>
+    </div>
+    <div class="card-body">
+      <h3>折中方案</h3>
+      <p>单 LLM 但分阶段限制工具权限，prompt 按阶段切换，实现较简单</p>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:24px;padding:12px;background:#f5f5f5;border-radius:6px;">
+  <h3 style="margin-top:0;">当前架构关键问题</h3>
+  <ul style="margin:0;padding-left:20px;color:#555;font-size:13px;">
+    <li>LLM 看不到音符细节，只能调工具</li>
+    <li>没有分析→编排→表达的阶段概念</li>
+    <li>工具间没有依赖关系感知</li>
+    <li>产出质量没有 Critic 把关</li>
+    <li>结果文本只有一行，信息丢失严重</li>
+  </ul>
+</div>

@@ -1,0 +1,52 @@
+<h2>多角色协作流水线 — 架构设计</h2>
+<p class="subtitle">验证整体架构，确认后进入下一节细节</p>
+
+<div class="section">
+  <h3>数据流</h3>
+  <div style="display:flex;flex-direction:column;gap:4px;align-items:center;margin:16px 0;font-family:monospace;font-size:13px;">
+    <div style="background:#e8e8e8;padding:8px 16px;border-radius:4px;text-align:center;">
+      <strong>输入</strong><br>MIDI piece + 用户指令
+    </div>
+    <div style="color:#999;">↓</div>
+    <div style="background:#ffe8cc;padding:8px 16px;border-radius:4px;text-align:center;">
+      <strong>Planner</strong><br>解析指令 → 生成执行计划<br><span style="color:#888;font-size:11px;">输出: JSON {phases, params}</span>
+    </div>
+    <div style="color:#999;">↓ 计划</div>
+    <div style="background:#e8ffe8;padding:8px 16px;border-radius:4px;text-align:center;">
+      <strong>Analyst</strong><br>提取旋律/和声/音域诊断<br><span style="color:#888;font-size:11px;">输出: 结构化诊断报告</span>
+    </div>
+    <div style="color:#999;">↓ 报告</div>
+    <div style="background:#d4e8ff;padding:8px 16px;border-radius:4px;text-align:center;">
+      <strong>Arranger</strong><br>编排乐器布局、声部映射<br><span style="color:#888;font-size:11px;">输出: 修改后的 piece + 编排报告</span>
+    </div>
+    <div style="color:#999;">↓ piece + 报告</div>
+    <div style="background:#fff0d4;padding:8px 16px;border-radius:4px;text-align:center;">
+      <strong>Harmonist</strong><br>生成伴奏/和弦走向（可选）<br><span style="color:#888;font-size:11px;">输出: 追加的伴奏 track</span>
+    </div>
+    <div style="color:#999;">↓ piece</div>
+    <div style="background:#f0d4ff;padding:8px 16px;border-radius:4px;text-align:center;">
+      <strong>Expression</strong><br>力度调整、时序变化、踏板<br><span style="color:#888;font-size:11px;">输出: 最终 piece</span>
+    </div>
+    <div style="color:#999;">↓ piece</div>
+    <div style="background:#ffd4d4;padding:8px 16px;border-radius:4px;text-align:center;">
+      <strong>Critic</strong><br>质量评审 → 通过/打回<br><span style="color:#888;font-size:11px;">最多打回 2 次到对应角色</span>
+    </div>
+    <div style="color:#999;">↓ 通过</div>
+    <div style="background:#e8e8e8;padding:8px 16px;border-radius:4px;text-align:center;">
+      <strong>输出</strong><br>最终 MIDI 文件
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>核心设计原则</h3>
+  <ul style="padding-left:20px;color:#555;">
+    <li>每个角色 = 1 个 LLM 调用 + 专用 prompt + 专用工具子集</li>
+    <li>角色间通过结构化 JSON 报告通信，不是原始文本</li>
+    <li>Critic 有独立的 LLM 调用，评审规则写入 prompt</li>
+    <li>打回机制：Critic → 具体角色（不是全部重跑）</li>
+    <li>Planner 不参与音乐创作，只做路由和参数传递</li>
+  </ul>
+</div>
+
+<p style="color:#888;font-size:13px;">整体架构是否符合你的预期？确认后进入角色详细设计。</p>
