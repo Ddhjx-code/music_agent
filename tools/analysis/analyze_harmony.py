@@ -78,17 +78,25 @@ class AnalyzeHarmonyTool:
         return progression
 
     def _get_start_times(self, track_content, notes):
-        """Compute actual start times for notes in a track/chord."""
+        """Compute cumulative start times from musicpy interval gaps.
+
+        musicpy chord intervals represent: interval[0] = time offset to
+        first note, interval[i] = gap from note[i-1] to note[i].
+        So time[i] = sum(intervals[:i]) for i > 0, time[0] = 0.
+        """
         intervals = getattr(track_content, 'interval', None)
-        if intervals is None or len(intervals) != len(notes):
-            # Fallback: sequential timing
-            times = []
-            current = 0.0
-            for n in notes:
-                times.append(current)
-                current += getattr(n, 'duration', 0.25)
+        if intervals and len(intervals) == len(notes):
+            times = [0.0]
+            for g in intervals[1:]:
+                times.append(times[-1] + g)
             return times
-        return list(intervals)
+        # Fallback: sequential timing by note duration
+        times = []
+        current = 0.0
+        for n in notes:
+            times.append(current)
+            current += getattr(n, 'duration', 0.25)
+        return times
 
     def _detect_chord(self, notes) -> dict:
         """Detect chord from notes using musicpy alg.detect."""
@@ -111,10 +119,12 @@ class AnalyzeHarmonyTool:
                 root = ct.note_name[:-1]  # e.g., 'D4' -> 'D'
                 return {'chord': f'{root}major', 'root': root, 'quality': 'major'}
 
-            # Fallback: string detection, minimal cleanup
+            # Fallback: string detection with cleanup
             raw = mp.alg.detect(chord_obj)
             root = self._extract_root(raw)
-            return {'chord': raw, 'root': root, 'quality': raw.replace(root, '') or 'major'}
+            cleaned = re.sub(r'\s*sort\s+as\s+\[.*?\]', '', raw)
+            cleaned = re.sub(r'\s*omit\s+\w+', '', cleaned).strip()
+            return {'chord': cleaned, 'root': root, 'quality': cleaned.replace(root, '').strip() or 'major'}
 
         except Exception:
             return {'chord': 'unknown', 'root': 'C', 'quality': 'unknown'}

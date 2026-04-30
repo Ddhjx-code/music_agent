@@ -168,7 +168,7 @@ def multi_track_piece():
 
     # Track 1: block chords, one per measure
     harmony_notes = []
-    harmony_intervals = []
+    harmony_intervals = []  # gaps between consecutive notes
     chord_data = [
         (['C3', 'E3', 'G3', 'C4', 'E4', 'G4'], 1.0),
         (['G2', 'B2', 'D3', 'G3', 'B3', 'D4'], 1.0),
@@ -179,28 +179,37 @@ def multi_track_piece():
         (['A2', 'C3', 'E3', 'A3', 'C4', 'E4'], 1.0),
         (['F2', 'A2', 'C3', 'F3', 'A3', 'C4'], 1.0),
     ]
-    for pos, (chord_notes, dur) in enumerate(chord_data):
-        for name in chord_notes:
+    cum = 0.0
+    for chord_idx, (chord_notes, dur) in enumerate(chord_data):
+        chord_start = float(chord_idx)
+        for name_i, name in enumerate(chord_notes):
             harmony_notes.append(mp.note(name[0], int(name[1]), duration=dur))
-            harmony_intervals.append(float(pos))
+            if name_i == 0:
+                harmony_intervals.append(chord_start - cum)
+            else:
+                harmony_intervals.append(0.0)
+            cum = chord_start
     harmony = mp.chord(harmony_notes, interval=harmony_intervals)
 
     # Track 2: bass line (root notes, half notes, 2 per measure)
     bass_notes = []
-    bass_intervals = []
-    bass_pos = 0.0
-    for root_note, oct in [('C', 2), ('G', 2), ('A', 2), ('F', 2),
-                            ('C', 2), ('G', 2), ('A', 2), ('F', 2)]:
+    bass_intervals = []  # gaps between consecutive notes
+    cum = 0.0
+    for measure_idx, (root_note, oct) in enumerate([('C', 2), ('G', 2), ('A', 2), ('F', 2),
+                            ('C', 2), ('G', 2), ('A', 2), ('F', 2)]):
+        target_1 = float(measure_idx)
+        target_2 = float(measure_idx) + 0.5
         bass_notes.append(mp.note(root_note, oct, duration=0.5))
-        bass_intervals.append(bass_pos)
+        bass_intervals.append(target_1 - cum)
+        cum = target_1
         bass_notes.append(mp.note(root_note, oct, duration=0.5))
-        bass_intervals.append(bass_pos + 0.5)
-        bass_pos += 1.0
+        bass_intervals.append(target_2 - cum)
+        cum = target_2
     bass = mp.chord(bass_notes, interval=bass_intervals)
 
     # Track 3: effect track — many very-short notes (should be excluded)
     effect_notes = [mp.note('C', 1, duration=0.002) for _ in range(200)]
-    effect_intervals = [float(i) * 0.002 for i in range(200)]
+    effect_intervals = [0.002] * 200  # gaps of 0.002
     effect = mp.chord(effect_notes, interval=effect_intervals)
 
     piece = mp.P(
